@@ -20,11 +20,25 @@ def setup_logging(verbose: bool = False, log_file: Optional[Path] = None) -> Non
     # With --debug flag, show everything (DEBUG and above)
     log_level = logging.DEBUG if verbose else logging.CRITICAL
 
+    # Import here to avoid circular dependency
+    from rich.logging import RichHandler
+    from patchsmith.cli.progress import console
+
+    # Use RichHandler with the shared console instance for proper coordination
+    rich_handler = RichHandler(
+        console=console,
+        show_time=False,
+        show_level=True,
+        show_path=False,
+        markup=True,
+        rich_tracebacks=True,
+    )
+
     # Configure standard library logging
     logging.basicConfig(
         format="%(message)s",
-        stream=sys.stderr,
         level=log_level,
+        handlers=[rich_handler],
     )
 
     # Configure structlog processors
@@ -36,10 +50,17 @@ def setup_logging(verbose: bool = False, log_file: Optional[Path] = None) -> Non
         structlog.processors.StackInfoRenderer(),
     ]
 
-    # Console output processor (human-readable)
-    console_processors = processors + [
-        structlog.dev.ConsoleRenderer(colors=True),
-    ]
+    # When using RichHandler, use plain console renderer (no colors)
+    # RichHandler will do the formatting
+    if verbose:
+        console_processors = processors + [
+            structlog.dev.ConsoleRenderer(colors=False),  # No colors - let RichHandler do it
+        ]
+    else:
+        # When not verbose, use colors for any errors that do show
+        console_processors = processors + [
+            structlog.dev.ConsoleRenderer(colors=True),
+        ]
 
     # Configure structlog
     structlog.configure(
