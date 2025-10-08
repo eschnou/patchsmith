@@ -126,7 +126,7 @@ async def _generate_report(
                     project_path=path,
                     perform_triage=True,
                     perform_detailed_analysis=True,
-                    detailed_analysis_limit=10,
+                    detailed_analysis_limit=None,  # Analyze all recommended findings
                 )
 
             console.print()

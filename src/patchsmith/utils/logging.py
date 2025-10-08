@@ -13,12 +13,12 @@ def setup_logging(verbose: bool = False, log_file: Optional[Path] = None) -> Non
     Setup structured logging with console and file output.
 
     Args:
-        verbose: If True, set log level to DEBUG, otherwise WARNING (silent)
+        verbose: If True, set log level to DEBUG, otherwise CRITICAL (silent)
         log_file: Optional path to log file, defaults to .patchsmith/audit.log
     """
-    # By default, only show WARNING and above (errors)
+    # By default, only show CRITICAL errors (effectively silent)
     # With --debug flag, show everything (DEBUG and above)
-    log_level = logging.DEBUG if verbose else logging.WARNING
+    log_level = logging.DEBUG if verbose else logging.CRITICAL
 
     # Configure standard library logging
     logging.basicConfig(

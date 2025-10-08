@@ -98,7 +98,6 @@ async def _run_analysis(
                 project_path=path,
                 perform_triage=perform_triage,
                 perform_detailed_analysis=False,  # Detailed analysis moved to 'investigate' command
-                detailed_analysis_limit=0,
             )
 
         # Display results

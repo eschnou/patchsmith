@@ -234,6 +234,19 @@ class GitRepository:
 
         logger.debug("git_file_staged", file_path=str(file_path))
 
+    def stage_all(self) -> None:
+        """
+        Stage all modified and new files in the repository.
+
+        This is equivalent to `git add -A`.
+
+        Raises:
+            GitError: If staging fails
+        """
+        self._run_git_command(["add", "-A"])
+
+        logger.debug("git_all_files_staged")
+
     def commit(
         self,
         message: str,

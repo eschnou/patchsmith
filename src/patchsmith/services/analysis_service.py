@@ -58,7 +58,7 @@ class AnalysisService(BaseService):
         project_path: Path,
         perform_triage: bool = True,
         perform_detailed_analysis: bool = True,
-        detailed_analysis_limit: int = 10,
+        detailed_analysis_limit: int | None = None,
     ) -> tuple[AnalysisResult, list[TriageResult] | None, dict[str, DetailedSecurityAssessment] | None]:
         """
         Perform complete security analysis on a project.
@@ -67,7 +67,7 @@ class AnalysisService(BaseService):
             project_path: Path to project to analyze
             perform_triage: Whether to perform triage (prioritization)
             perform_detailed_analysis: Whether to perform detailed analysis on top findings
-            detailed_analysis_limit: Max findings to analyze in detail
+            detailed_analysis_limit: Max findings to analyze in detail (None = all recommended)
 
         Returns:
             Tuple of (AnalysisResult, triage_results, detailed_assessments)
@@ -106,6 +106,28 @@ class AnalysisService(BaseService):
             # Create .patchsmith directory for all artifacts
             patchsmith_dir = project_path / ".patchsmith"
             patchsmith_dir.mkdir(exist_ok=True)
+
+            # Ensure .gitignore exists to prevent committing temporary files
+            gitignore_path = patchsmith_dir / ".gitignore"
+            if not gitignore_path.exists():
+                gitignore_content = """# Patchsmith temporary files - do not commit
+# Only config.json should be committed
+
+# CodeQL databases
+db_*/
+
+# SARIF results
+*.sarif
+results_*.sarif
+
+# Temporary directories
+results/
+cache/
+
+# Reports are generated, not source files
+reports/
+"""
+                gitignore_path.write_text(gitignore_content)
 
             db_path = patchsmith_dir / f"db_{codeql_language}"
 
@@ -174,11 +196,18 @@ class AnalysisService(BaseService):
             # Step 6: Detailed security analysis (optional)
             detailed_assessments = None
             if perform_detailed_analysis and triage_results:
-                # Get top findings recommended for analysis
+                # Get findings recommended for analysis
                 findings_to_analyze = []
                 recommended = [t for t in triage_results if t.recommended_for_analysis]
 
-                for triage in recommended[:detailed_analysis_limit]:
+                # Apply limit if specified, otherwise analyze all recommended
+                findings_to_process = (
+                    recommended[:detailed_analysis_limit]
+                    if detailed_analysis_limit is not None
+                    else recommended
+                )
+
+                for triage in findings_to_process:
                     finding = next((f for f in findings if f.id == triage.finding_id), None)
                     if finding:
                         findings_to_analyze.append(finding)

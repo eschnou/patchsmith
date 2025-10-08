@@ -85,12 +85,22 @@ def init(path: Path | None, name: str | None, save_api_key: bool) -> None:
 
     # Create .gitignore
     gitignore_path = config_dir / ".gitignore"
-    gitignore_content = """# Patchsmith temporary files
-*.db
+    gitignore_content = """# Patchsmith temporary files - do not commit
+# Only config.json should be committed
+
+# CodeQL databases
+db_*/
+
+# SARIF results
 *.sarif
+results_*.sarif
+
+# Temporary directories
 results/
-reports/
 cache/
+
+# Reports are generated, not source files
+reports/
 """
     gitignore_path.write_text(gitignore_content)
     print_success(f"Created .gitignore: {gitignore_path}")
