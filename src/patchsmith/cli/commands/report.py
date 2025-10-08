@@ -1,6 +1,7 @@
 """Report command for generating security reports."""
 
 import asyncio
+import json
 from pathlib import Path
 
 import click
@@ -12,7 +13,9 @@ from patchsmith.cli.progress import (
     print_info,
     print_success,
 )
+from patchsmith.models.analysis import AnalysisResult, AnalysisStatistics, TriageResult
 from patchsmith.models.config import PatchsmithConfig
+from patchsmith.models.finding import CWE, DetailedSecurityAssessment, Finding, Severity
 from patchsmith.services.analysis_service import AnalysisService
 from patchsmith.services.report_service import ReportService
 
@@ -33,15 +36,15 @@ from patchsmith.services.report_service import ReportService
     help="Output file path (default: .patchsmith_reports/<project>_report.<format>)"
 )
 @click.option(
-    "--no-analysis",
+    "--force-analysis",
     is_flag=True,
-    help="Skip analysis and only generate report from existing data"
+    help="Force re-running analysis instead of using cached results"
 )
 def report(
     path: Path | None,
     format: str,
     output: Path | None,
-    no_analysis: bool,
+    force_analysis: bool,
 ) -> None:
     """Generate a comprehensive security report.
 
@@ -53,12 +56,16 @@ def report(
       • Recommendations
 
     \b
+    By default, uses cached analysis results from the last 'patchsmith analyze' run.
+    Use --force-analysis to re-run the analysis.
+
+    \b
     Examples:
-        patchsmith report                        # Report on current directory
+        patchsmith report                        # Report from cached data
         patchsmith report /path/to/project
         patchsmith report --format html          # Generate HTML report
         patchsmith report -o my_report.md        # Custom output path
-        patchsmith report --no-analysis          # Use existing analysis data
+        patchsmith report --force-analysis       # Re-run analysis first
     """
     # Use current directory if no path provided
     if path is None:
@@ -69,14 +76,14 @@ def report(
     console.print(f"Format: [yellow]{format}[/yellow]\n")
 
     # Run report generation
-    asyncio.run(_generate_report(path, format, output, no_analysis))
+    asyncio.run(_generate_report(path, format, output, force_analysis))
 
 
 async def _generate_report(
     path: Path,
     report_format: str,
     output_path: Path | None,
-    no_analysis: bool,
+    force_analysis: bool,
 ) -> None:
     """Generate the report.
 
@@ -84,7 +91,7 @@ async def _generate_report(
         path: Path to project
         report_format: Report format (markdown, html, text)
         output_path: Optional output path
-        no_analysis: Whether to skip running analysis
+        force_analysis: Whether to force re-running analysis
     """
     try:
         # Create configuration
@@ -105,7 +112,8 @@ async def _generate_report(
         triage_results = None
         detailed_assessments = None
 
-        if not no_analysis:
+        if force_analysis:
+            # Force re-run analysis
             print_info("Running analysis (this may take a few minutes)...")
 
             with ProgressTracker() as tracker:
@@ -124,10 +132,82 @@ async def _generate_report(
             console.print()
             print_success("Analysis completed!")
         else:
-            # TODO: Load from cached analysis results
-            print_error("Loading cached results not yet implemented")
-            print_info("Please run without --no-analysis flag")
-            raise click.Abort()
+            # Load from cached results (default)
+            results_file = path / ".patchsmith_results.json"
+            if not results_file.exists():
+                print_error("No cached analysis results found")
+                print_info("Run 'patchsmith analyze' first, or use --force-analysis to run analysis now")
+                raise click.Abort()
+
+            print_info("Loading cached analysis results...")
+
+            with open(results_file) as f:
+                data = json.load(f)
+
+            # Reconstruct analysis result
+            findings = []
+            for f_data in data.get("findings", []):
+                finding = Finding(
+                    id=f_data["id"],
+                    rule_id=f_data["rule_id"],
+                    severity=Severity(f_data["severity"]),
+                    cwe=CWE(id=f_data["cwe"]["id"]) if f_data.get("cwe") else None,
+                    file_path=Path(f_data["file_path"]),
+                    start_line=f_data["start_line"],
+                    end_line=f_data.get("end_line", f_data["start_line"]),
+                    message=f_data["message"],
+                    snippet=f_data.get("snippet"),
+                )
+                findings.append(finding)
+
+            # Reconstruct statistics
+            stats_data = data.get("statistics", {})
+            statistics = AnalysisStatistics(
+                total_findings=data.get("total_findings", len(findings)),
+                by_severity={},
+                by_cwe={},
+                by_language={},
+            )
+
+            # Reconstruct triage results
+            triage_results = []
+            for t_data in data.get("triage_results", []):
+                triage = TriageResult(
+                    finding_id=t_data["finding_id"],
+                    priority_score=t_data["priority_score"],
+                    recommended_for_analysis=t_data.get("recommended_for_analysis", False),
+                    reasoning=t_data.get("reasoning", ""),
+                )
+                triage_results.append(triage)
+
+            # Reconstruct detailed assessments
+            detailed_assessments = {}
+            for finding_id, assessment_data in data.get("detailed_assessments", {}).items():
+                assessment = DetailedSecurityAssessment(
+                    finding_id=finding_id,
+                    is_false_positive=assessment_data["is_false_positive"],
+                    false_positive_score=assessment_data.get("false_positive_score", 0.0),
+                    false_positive_reasoning=assessment_data["false_positive_reasoning"],
+                    attack_scenario=assessment_data.get("attack_scenario", ""),
+                    risk_type=assessment_data.get("risk_type", "other"),
+                    exploitability_score=assessment_data.get("exploitability_score", 0.0),
+                    impact_description=assessment_data.get("impact_description", ""),
+                    remediation_priority=assessment_data.get("remediation_priority", "low"),
+                )
+                detailed_assessments[finding_id] = assessment
+
+            # Create AnalysisResult
+            from datetime import datetime
+            analysis_result = AnalysisResult(
+                project_name=data.get("project_name", path.name),
+                timestamp=datetime.fromisoformat(data["timestamp"]),
+                languages_analyzed=data.get("languages", []),
+                findings=findings,
+                statistics=statistics,
+            )
+
+            print_success(f"Loaded {len(findings)} findings from cache")
+            console.print()
 
         # Generate report
         if analysis_result is None:

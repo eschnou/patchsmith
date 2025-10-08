@@ -102,7 +102,12 @@ class AnalysisService(BaseService):
 
             # Map language to CodeQL language
             codeql_language = self._map_language_to_codeql(primary_language.name)
-            db_path = project_path.parent / f".patchsmith_db_{codeql_language}"
+
+            # Create .patchsmith directory for all artifacts
+            patchsmith_dir = project_path / ".patchsmith"
+            patchsmith_dir.mkdir(exist_ok=True)
+
+            db_path = patchsmith_dir / f"db_{codeql_language}"
 
             self.codeql.create_database(
                 source_root=project_path,
@@ -119,7 +124,7 @@ class AnalysisService(BaseService):
             # Step 3: Run CodeQL queries
             self._emit_progress("codeql_queries_started")
             query_suite = self._get_query_suite(codeql_language)
-            results_path = project_path.parent / f".patchsmith_results_{codeql_language}.sarif"
+            results_path = patchsmith_dir / f"results_{codeql_language}.sarif"
 
             self.codeql.run_queries(
                 db_path=db_path,
@@ -137,6 +142,10 @@ class AnalysisService(BaseService):
             # Step 4: Parse SARIF results
             self._emit_progress("sarif_parsing_started")
             findings = self.sarif_parser.parse_file(results_path)
+
+            # Assign short, user-friendly IDs (F-1, F-2, etc.)
+            findings = self._assign_short_ids(findings)
+
             self._emit_progress(
                 "sarif_parsing_completed",
                 finding_count=len(findings),
@@ -179,10 +188,18 @@ class AnalysisService(BaseService):
                         "detailed_analysis_started",
                         finding_count=len(findings_to_analyze),
                     )
+
+                    # Create analysis agent with progress callback
                     analysis_agent = DetailedSecurityAnalysisAgent(
                         working_dir=project_path,
                     )
-                    detailed_assessments = await analysis_agent.execute(findings_to_analyze)
+
+                    # Perform analysis with per-finding progress
+                    detailed_assessments = await self._analyze_findings_with_progress(
+                        analysis_agent,
+                        findings_to_analyze,
+                    )
+
                     self._emit_progress(
                         "detailed_analysis_completed",
                         analyzed_count=len(detailed_assessments),
@@ -223,6 +240,73 @@ class AnalysisService(BaseService):
                 error=str(e),
             )
             raise
+
+    async def _analyze_findings_with_progress(
+        self,
+        analysis_agent: DetailedSecurityAnalysisAgent,
+        findings: list[Finding],
+    ) -> dict[str, Any]:
+        """
+        Analyze findings one by one with progress updates.
+
+        Args:
+            analysis_agent: The detailed analysis agent
+            findings: List of findings to analyze
+
+        Returns:
+            Dictionary of finding_id to DetailedSecurityAssessment
+        """
+        from patchsmith.adapters.claude.detailed_security_analysis_agent import (
+            DetailedSecurityAssessment,
+        )
+
+        assessments: dict[str, DetailedSecurityAssessment] = {}
+        total = len(findings)
+
+        for index, finding in enumerate(findings, start=1):
+            # Emit progress for this specific finding
+            self._emit_progress(
+                "detailed_analysis_finding_progress",
+                current=index,
+                total=total,
+                finding_id=finding.id,
+                severity=finding.severity.value if finding.severity else "unknown",
+            )
+
+            # Analyze single finding
+            result = await analysis_agent.execute([finding])
+            if result:
+                assessments.update(result)
+
+        return assessments
+
+    def _assign_short_ids(self, findings: list[Finding]) -> list[Finding]:
+        """
+        Assign short, user-friendly IDs to findings.
+
+        Original IDs from CodeQL are very long (e.g., js/property-access-on-non-object_index-C_YCkAbh.js_1).
+        This replaces them with short sequential IDs like F-1, F-2, F-3, etc.
+
+        The original rule_id is preserved in the rule_id field for reference.
+
+        Args:
+            findings: List of findings with long IDs
+
+        Returns:
+            List of findings with short IDs assigned
+        """
+        for index, finding in enumerate(findings, start=1):
+            # Store original ID in a way that's still accessible if needed
+            # but assign a short, memorable ID
+            finding.id = f"F-{index}"
+
+        logger.info(
+            "assigned_short_ids",
+            count=len(findings),
+            id_range=f"F-1 to F-{len(findings)}" if findings else "none",
+        )
+
+        return findings
 
     def _map_language_to_codeql(self, language: str) -> str:
         """

@@ -22,6 +22,7 @@ class ProgressTracker:
     def __init__(self) -> None:
         """Initialize progress tracker."""
         self.progress = Progress(
+            TextColumn("  "),  # Fixed 2-space indent for alignment
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
             BarColumn(),
@@ -77,12 +78,38 @@ class ProgressTracker:
             "fix_application_completed": "✓ Fix applied successfully",
         }
 
+        # Special handling for per-finding detailed analysis progress
+        if event == "detailed_analysis_finding_progress":
+            current = data.get("current", 0)
+            total = data.get("total", 1)
+            finding_id = data.get("finding_id", "unknown")
+            severity = data.get("severity", "unknown")
+
+            description = f"Analyzing finding {current}/{total} ({severity})"
+
+            # Update or create detailed analysis task with actual progress
+            base_event = "detailed_analysis_started"
+            if base_event in self.tasks:
+                # Calculate percentage based on current/total
+                percentage = (current / total) * 100
+                self.progress.update(
+                    self.tasks[base_event],
+                    completed=percentage,
+                    description=description,
+                )
+            return
+
         description = descriptions.get(event, event)
 
         # Handle task lifecycle
         if event.endswith("_started"):
             # Start new task
-            task_id = self.progress.add_task(description, total=100)
+            # For detailed analysis, start with 0 progress (will be updated by per-finding events)
+            if event == "detailed_analysis_started":
+                total_findings = data.get("finding_count", 100)
+                task_id = self.progress.add_task(description, total=100)
+            else:
+                task_id = self.progress.add_task(description, total=100)
             self.tasks[event] = task_id
             self.current_phase = event
         elif event.endswith("_completed") or event.endswith("_created") or event.endswith("_saved"):
@@ -145,10 +172,10 @@ def print_findings_table(findings: list[Any], limit: int = 10) -> None:
     """
     table = Table(title=f"Top {min(limit, len(findings))} Findings", show_lines=True)
 
-    table.add_column("ID", style="cyan", no_wrap=True, width=30)
+    table.add_column("ID", style="cyan bold", no_wrap=True, width=8)
     table.add_column("Severity", style="bold", width=10)
-    table.add_column("Rule", style="yellow", width=30)
-    table.add_column("Location", style="green", width=40)
+    table.add_column("Rule", style="yellow", width=35)
+    table.add_column("Location", style="green", width=45)
 
     for finding in findings[:limit]:
         severity_color = {
@@ -159,9 +186,9 @@ def print_findings_table(findings: list[Any], limit: int = 10) -> None:
         }.get(finding.severity.value, "white")
 
         table.add_row(
-            finding.id[:30],
+            finding.id,  # No truncation - short IDs like F-1, F-2
             f"[{severity_color}]{finding.severity.value.upper()}[/{severity_color}]",
-            finding.rule_id[:30],
+            finding.rule_id[:35],  # Truncate rule name if needed
             f"{finding.file_path.name}:{finding.start_line}",
         )
 

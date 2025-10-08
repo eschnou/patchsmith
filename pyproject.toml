@@ -41,6 +41,7 @@ types-pyyaml = "^6.0.12.20250915"
 
 [tool.poetry.scripts]
 patchsmith = "patchsmith.cli.main:cli"
+psmith = "patchsmith.cli.main:cli"
 
 [build-system]
 requires = ["poetry-core"]

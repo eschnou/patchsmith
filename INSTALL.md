@@ -118,13 +118,25 @@ Required for AI-powered features (triage, detailed analysis, fix generation).
 
 1. Sign up at https://console.anthropic.com/
 2. Generate an API key
-3. Set environment variable:
+3. Configure the API key using one of these methods:
+
+**Option A: User config file (Recommended - most convenient)**
+
+Run `patchsmith init` and it will prompt you to save your API key:
+
+```bash
+patchsmith init --save-api-key
+```
+
+This saves your key to `~/.patchsmith/config.yaml` with secure permissions (600).
+
+**Option B: Environment variable (Good for CI/CD or temporary use)**
 
 ```bash
 export ANTHROPIC_API_KEY='your-api-key-here'
 ```
 
-**Make it permanent** by adding to your shell profile:
+Make it permanent by adding to your shell profile:
 
 ```bash
 # For bash
@@ -135,6 +147,22 @@ source ~/.bashrc
 echo 'export ANTHROPIC_API_KEY="your-key"' >> ~/.zshrc
 source ~/.zshrc
 ```
+
+**Option C: Manual user config file**
+
+Create `~/.patchsmith/config.yaml`:
+
+```yaml
+anthropic_api_key: 'your-api-key-here'
+```
+
+Then set secure permissions:
+
+```bash
+chmod 600 ~/.patchsmith/config.yaml
+```
+
+**Priority:** Environment variable > User config file
 
 ### 3. Git (Optional but Recommended)
 

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from patchsmith.core.user_config import get_api_key
 from patchsmith.models.config import PatchsmithConfig
 
 
@@ -18,13 +19,14 @@ def load_config(
     project_root: Optional[Path] = None,
 ) -> PatchsmithConfig:
     """
-    Load configuration with hierarchy: CLI args > env vars > file > defaults.
+    Load configuration with hierarchy: CLI args > env vars > user config > file > defaults.
 
     Priority order (highest to lowest):
     1. Explicitly provided config_path parameter
-    2. Environment variables (PATCHSMITH_*)
-    3. .patchsmith/config.json in current or project directory
-    4. Error if not found
+    2. Environment variables (PATCHSMITH_*, ANTHROPIC_API_KEY)
+    3. User-level config (~/.patchsmith/config.yaml)
+    4. .patchsmith/config.json in current or project directory
+    5. Error if not found
 
     Args:
         config_path: Optional explicit path to config file
@@ -36,6 +38,9 @@ def load_config(
     Raises:
         ConfigError: If configuration cannot be loaded or is invalid
     """
+    # Ensure API key is available from env var or user config
+    _ensure_api_key_available()
+
     # Determine config file path
     if config_path is None:
         config_path = _find_config_file(project_root)
@@ -187,6 +192,44 @@ def validate_config(config: PatchsmithConfig) -> list[str]:
     # Note: We don't validate CodeQL database path exists since it will be created during init
 
     return issues
+
+
+def _ensure_api_key_available() -> None:
+    """
+    Ensure Anthropic API key is available from env var or user config.
+
+    If API key is found in user config but not in environment, sets it in the environment
+    so that the Claude SDK can use it.
+
+    Raises:
+        ConfigError: If API key is not found anywhere
+    """
+    # Check if already set in environment
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return
+
+    # Try to load from user config
+    api_key = get_api_key()
+
+    if api_key:
+        # Set in environment for Claude SDK to use
+        os.environ["ANTHROPIC_API_KEY"] = api_key
+        return
+
+    # Not found anywhere - raise error with helpful message
+    from patchsmith.core.user_config import get_user_config_path
+
+    config_path = get_user_config_path()
+    raise ConfigError(
+        "Anthropic API key not found.\n\n"
+        "Please set it using one of these methods:\n\n"
+        "1. Environment variable:\n"
+        "   export ANTHROPIC_API_KEY='your-api-key-here'\n\n"
+        f"2. User config file ({config_path}):\n"
+        "   anthropic_api_key: 'your-api-key-here'\n\n"
+        "   Or run: patchsmith init --save-api-key\n\n"
+        "Get your API key from: https://console.anthropic.com/"
+    )
 
 
 def ensure_initialized(project_root: Optional[Path] = None) -> None:

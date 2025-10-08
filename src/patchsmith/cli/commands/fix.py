@@ -1,6 +1,7 @@
 """Fix command for generating and applying security fixes."""
 
 import asyncio
+import json
 from pathlib import Path
 
 import click
@@ -14,7 +15,7 @@ from patchsmith.cli.progress import (
     print_warning,
 )
 from patchsmith.models.config import PatchsmithConfig
-from patchsmith.models.finding import Finding
+from patchsmith.models.finding import CWE, Finding, Severity
 from patchsmith.services.analysis_service import AnalysisService
 from patchsmith.services.fix_service import FixService
 
@@ -176,28 +177,42 @@ async def _generate_and_apply_fix(
 
         # Get the finding
         if finding_id:
-            # Try to find it in recent analysis or search project
-            # For now, we'll need to run analysis to get the finding
-            print_info(f"Looking up finding: {finding_id}")
+            # Load from cached results first
+            results_file = path / ".patchsmith_results.json"
+            if not results_file.exists():
+                print_error("No cached analysis results found")
+                print_info("Run 'patchsmith analyze' first to analyze the project")
+                raise click.Abort()
 
-            with ProgressTracker() as tracker:
-                analysis_service = AnalysisService(
-                    config=config,
-                    progress_callback=tracker.handle_progress
-                )
+            print_info(f"Loading finding: {finding_id}")
 
-                analysis_result, _, _ = await analysis_service.analyze_project(
-                    project_path=path,
-                    perform_triage=False,
-                    perform_detailed_analysis=False,
-                )
+            with open(results_file) as f:
+                data = json.load(f)
 
-            finding = next((f for f in analysis_result.findings if f.id == finding_id), None)
+            # Find the specific finding
+            finding_dict = next((f for f in data.get("findings", []) if f["id"] == finding_id), None)
+            if not finding_dict:
+                print_error(f"Finding {finding_id} not found in cached results")
+                print_info("Available findings:")
+                for f in data.get("findings", [])[:10]:
+                    console.print(f"  • {f['id']}: {f['rule_id']}")
+                if len(data.get("findings", [])) > 10:
+                    console.print(f"  ... and {len(data['findings']) - 10} more")
+                print_info("\nTip: Run 'patchsmith list' to see all findings")
+                raise click.Abort()
 
-            if not finding:
-                print_error(f"Finding not found: {finding_id}")
-                print_info("Run 'patchsmith analyze' to see available findings")
-                return
+            # Reconstruct Finding object
+            finding = Finding(
+                id=finding_dict["id"],
+                rule_id=finding_dict["rule_id"],
+                severity=Severity(finding_dict["severity"]),
+                cwe=CWE(id=finding_dict["cwe"]["id"]) if finding_dict.get("cwe") else None,
+                file_path=Path(finding_dict["file_path"]),
+                start_line=finding_dict["start_line"],
+                end_line=finding_dict.get("end_line", finding_dict["start_line"]),
+                message=finding_dict["message"],
+                snippet=finding_dict.get("snippet"),
+            )
 
         if not finding:
             print_error("No finding selected")

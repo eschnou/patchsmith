@@ -159,6 +159,7 @@ class CodeQLCLI:
         language: str,
         threads: int = 0,
         overwrite: bool = False,
+        build_command: Optional[str] = None,
     ) -> None:
         """
         Create a CodeQL database for a language.
@@ -169,6 +170,7 @@ class CodeQLCLI:
             language: Language to analyze (python, javascript, java, go, etc.)
             threads: Number of threads to use (0 = auto)
             overwrite: Whether to overwrite existing database
+            build_command: Custom build command (for compiled languages like Java/C++)
 
         Raises:
             CodeQLError: If database creation fails
@@ -207,6 +209,9 @@ class CodeQLCLI:
             f"--source-root={source_root}",
         ]
 
+        if build_command:
+            args.append(f"--command={build_command}")
+
         if threads > 0:
             args.append(f"--threads={threads}")
 
@@ -237,6 +242,22 @@ class CodeQLCLI:
                 db_path=str(db_path),
                 error=str(e),
             )
+
+            # Provide helpful error messages for common issues
+            error_msg = str(e).lower()
+            if "autobuild" in error_msg and language in ["java", "csharp", "cpp", "go"]:
+                hint = (
+                    f"\n\nCodeQL autobuild failed for {language}. This usually means:\n"
+                    f"  • The project's build system isn't recognized\n"
+                    f"  • Build dependencies are missing\n"
+                    f"  • The project requires custom build steps\n\n"
+                    f"Solutions:\n"
+                    f"  1. Ensure build tools are installed (Maven/Gradle for Java)\n"
+                    f"  2. Try building the project manually first\n"
+                    f"  3. Use a custom build command (future feature)\n"
+                )
+                raise CodeQLError(str(e) + hint) from e
+
             raise
 
     def run_queries(

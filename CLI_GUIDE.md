@@ -10,6 +10,14 @@ Welcome to Patchsmith! This guide will help you get started with the CLI.
    ```
 
 2. **Set up API Key** (required for AI features):
+
+   **Option A: During initialization (recommended):**
+   ```bash
+   patchsmith init --save-api-key
+   ```
+   This will prompt for your key and save it to `~/.patchsmith/config.yaml`
+
+   **Option B: Environment variable:**
    ```bash
    export ANTHROPIC_API_KEY='your-api-key-here'
    ```
@@ -18,6 +26,13 @@ Welcome to Patchsmith! This guide will help you get started with the CLI.
    ```bash
    echo 'export ANTHROPIC_API_KEY="your-key"' >> ~/.zshrc  # or ~/.bashrc
    source ~/.zshrc
+   ```
+
+   **Option C: Manual user config file:**
+
+   Create `~/.patchsmith/config.yaml`:
+   ```yaml
+   anthropic_api_key: 'your-api-key-here'
    ```
 
 3. **Install CodeQL** (required for analysis):
@@ -332,11 +347,29 @@ You can edit this file to customize:
 - AI model and parameters
 - Analysis batch size
 
-## Environment Variables
+## Configuration
 
-- `ANTHROPIC_API_KEY` - **Required** - Your Claude API key
-- `PATCHSMITH_CONFIG` - Optional - Path to config file
+### API Key Setup
+
+Patchsmith needs an Anthropic API key. Configure it using:
+
+**1. User config file (recommended):**
+- Location: `~/.patchsmith/config.yaml`
+- Run: `patchsmith init --save-api-key`
+- Permissions: Automatically set to 600 (owner only)
+
+**2. Environment variable:**
+- `ANTHROPIC_API_KEY` - Your Claude API key
+- Good for CI/CD or temporary overrides
+
+**Priority:** Environment variable takes precedence over user config file.
+
+### Other Environment Variables
+
+- `PATCHSMITH_CONFIG` - Optional - Path to project config file
 - `CODEQL_PATH` - Optional - Path to CodeQL CLI (default: searches PATH)
+- `PATCHSMITH_MODEL` - Optional - Override LLM model
+- `PATCHSMITH_MIN_SEVERITY` - Optional - Override minimum severity
 
 ## Tips & Best Practices
 
