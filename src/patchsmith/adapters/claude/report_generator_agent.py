@@ -91,20 +91,48 @@ Write in clear, professional technical language. Be specific and actionable."""
                 analysis_result, triage_results, detailed_assessments, report_format
             )
 
-            # Query Claude
-            response = await self.query_claude(
-                prompt=prompt,
-                max_turns=1,  # Report generation is straightforward
+            # Query Claude with turn tracking
+            from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+            options = ClaudeAgentOptions(
+                system_prompt=self.get_system_prompt(),
+                max_turns=10,  # Allow some turns for report refinement
                 allowed_tools=[],  # No tools needed
+                cwd=str(self.working_dir),
             )
+
+            response_text = ""
+            turn_count = 0
+
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
+
+                async for message in client.receive_response():
+                    message_type = type(message).__name__
+
+                    # Track turns for progress
+                    if message_type == "AssistantMessage":
+                        turn_count += 1
+                        self._emit_progress(turn_count)
+
+                    # Extract and emit thinking updates
+                    thinking = self._extract_thinking_from_message(message)
+                    if thinking:
+                        self._emit_thinking(thinking)
+
+                    # Collect response text
+                    if message_type == "AssistantMessage" and hasattr(message, "content"):
+                        for item in message.content if isinstance(message.content, list) else []:
+                            if type(item).__name__ == "TextBlock" and hasattr(item, "text"):
+                                response_text += item.text
 
             logger.info(
                 "report_generation_completed",
                 agent=self.agent_name,
-                report_length=len(response),
+                report_length=len(response_text),
             )
 
-            return response
+            return response_text
 
         except Exception as e:
             logger.error(

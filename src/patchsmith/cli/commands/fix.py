@@ -136,7 +136,8 @@ async def _autonomous_fix(path: Path, finding_id: str, no_pr: bool) -> None:
         with ProgressTracker() as tracker:
             fix_service = FixService(
                 config=config,
-                progress_callback=tracker.handle_progress
+                progress_callback=tracker.handle_progress,
+                thinking_callback=tracker.update_thinking,
             )
 
             result, message = await fix_service.autonomous_fix(

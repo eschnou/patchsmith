@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.progress import (
     BarColumn,
     Progress,
@@ -12,6 +13,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 
 console = Console()
 
@@ -21,6 +23,7 @@ class ProgressTracker:
 
     def __init__(self) -> None:
         """Initialize progress tracker."""
+        # Create progress for tasks (with bars)
         self.progress = Progress(
             TextColumn("  "),  # Fixed 2-space indent for alignment
             SpinnerColumn(),
@@ -28,19 +31,42 @@ class ProgressTracker:
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
-            console=console,
         )
         self.tasks: dict[str, TaskID] = {}
         self.current_phase: str | None = None
+        self.thinking_text: Text = Text("")
+        self.live: Live | None = None
 
     def __enter__(self) -> "ProgressTracker":
         """Enter context manager."""
-        self.progress.__enter__()
+        # Combine progress and thinking text in a group
+        group = Group(self.progress, self.thinking_text)
+        self.live = Live(group, console=console, refresh_per_second=10)
+        self.live.__enter__()
         return self
 
     def __exit__(self, *args: Any) -> None:
         """Exit context manager."""
-        self.progress.__exit__(*args)
+        if self.live:
+            self.live.__exit__(*args)
+
+    def update_thinking(self, message: str) -> None:
+        """Update agent thinking status.
+
+        Args:
+            message: Agent thinking message
+        """
+        if message:
+            # Update thinking text
+            self.thinking_text = Text(f"   💭 Agent: {message}", style="dim cyan")
+        else:
+            # Clear thinking text
+            self.thinking_text = Text("")
+
+        # Update the live display with new group
+        if self.live:
+            group = Group(self.progress, self.thinking_text)
+            self.live.update(group)
 
     def handle_progress(self, event: str, data: dict[str, Any]) -> None:
         """Handle progress event from service layer.
@@ -49,6 +75,19 @@ class ProgressTracker:
             event: Event name
             data: Event data
         """
+        # Handle agent turn progress
+        if event == "agent_turn_progress":
+            current_turn = data.get("current_turn", 0)
+            max_turns = data.get("max_turns", 100)
+            # Update current phase task with percentage based on turns
+            if self.current_phase and self.current_phase in self.tasks:
+                percentage = (current_turn / max_turns) * 100
+                self.progress.update(
+                    self.tasks[self.current_phase],
+                    completed=percentage,
+                )
+            return
+
         # Map events to user-friendly descriptions
         descriptions = {
             "analysis_started": "Starting security analysis...",

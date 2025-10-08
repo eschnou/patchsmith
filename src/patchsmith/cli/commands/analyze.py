@@ -87,10 +87,11 @@ async def _run_analysis(
 
         # Create progress tracker
         with ProgressTracker() as tracker:
-            # Create analysis service with progress tracking
+            # Create analysis service with progress tracking and thinking callback
             service = AnalysisService(
                 config=config,
-                progress_callback=tracker.handle_progress
+                progress_callback=tracker.handle_progress,
+                thinking_callback=tracker.update_thinking,  # Use tracker's thinking method
             )
 
             # Run analysis (no detailed analysis in main flow)

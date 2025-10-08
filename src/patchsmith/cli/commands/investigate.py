@@ -119,11 +119,29 @@ async def _run_investigation(finding_id: str, project_path: Path) -> None:
         project_root=project_path, project_name=project_path.name
     )
 
-    # Run detailed analysis
+    # Run detailed analysis with progress tracking
     console.print("[bold cyan]Running detailed security analysis...[/bold cyan]\n")
 
-    analysis_agent = DetailedSecurityAnalysisAgent(working_dir=project_path)
-    result = await analysis_agent.execute([finding])
+    with ProgressTracker() as tracker:
+        # Create agent progress callback
+        def agent_progress_callback(current_turn: int, max_turns: int):
+            tracker.handle_progress(
+                "agent_turn_progress",
+                {
+                    "current_turn": current_turn,
+                    "max_turns": max_turns,
+                },
+            )
+
+        analysis_agent = DetailedSecurityAnalysisAgent(
+            working_dir=project_path,
+            thinking_callback=tracker.update_thinking,
+            progress_callback=agent_progress_callback,
+        )
+        result = await analysis_agent.execute([finding])
+
+        # Clear thinking display when agent completes
+        tracker.update_thinking("")
 
     if not result or finding.id not in result:
         print_error("Failed to generate detailed analysis")

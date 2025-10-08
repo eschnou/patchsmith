@@ -119,7 +119,8 @@ async def _generate_report(
             with ProgressTracker() as tracker:
                 analysis_service = AnalysisService(
                     config=config,
-                    progress_callback=tracker.handle_progress
+                    progress_callback=tracker.handle_progress,
+                    thinking_callback=tracker.update_thinking,
                 )
 
                 analysis_result, triage_results, detailed_assessments = await analysis_service.analyze_project(
@@ -219,7 +220,8 @@ async def _generate_report(
         with ProgressTracker() as tracker:
             report_service = ReportService(
                 config=config,
-                progress_callback=tracker.handle_progress
+                progress_callback=tracker.handle_progress,
+                thinking_callback=tracker.update_thinking,
             )
 
             report_content = await report_service.generate_report(

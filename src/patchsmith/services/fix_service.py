@@ -29,6 +29,7 @@ class FixService(BaseService):
         self,
         config: PatchsmithConfig,
         progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        thinking_callback: Callable[[str], None] | None = None,
     ) -> None:
         """
         Initialize fix service.
@@ -36,8 +37,10 @@ class FixService(BaseService):
         Args:
             config: Patchsmith configuration
             progress_callback: Optional progress callback
+            thinking_callback: Optional callback for agent thinking updates
         """
         super().__init__(config, progress_callback)
+        self.thinking_callback = thinking_callback
 
     async def generate_fix(
         self,
@@ -310,8 +313,24 @@ class FixService(BaseService):
             # 2. Launch autonomous agent with Write access
             self._emit_progress("agent_launching", finding_id=finding.id)
 
-            agent = AutonomousFixAgent(working_dir=working_dir)
+            # Create agent progress callback
+            def agent_progress_callback(current_turn: int, max_turns: int):
+                self._emit_progress(
+                    "agent_turn_progress",
+                    current_turn=current_turn,
+                    max_turns=max_turns,
+                )
+
+            agent = AutonomousFixAgent(
+                working_dir=working_dir,
+                thinking_callback=self.thinking_callback,
+                progress_callback=agent_progress_callback,
+            )
             result = await agent.execute(finding=finding)
+
+            # Clear thinking display when agent completes
+            if self.thinking_callback:
+                self.thinking_callback("")
 
             if not result.success:
                 # Agent failed or abandoned - rollback

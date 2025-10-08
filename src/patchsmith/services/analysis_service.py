@@ -38,6 +38,7 @@ class AnalysisService(BaseService):
         self,
         config: PatchsmithConfig,
         progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        thinking_callback: Callable[[str], None] | None = None,
     ) -> None:
         """
         Initialize analysis service.
@@ -45,8 +46,10 @@ class AnalysisService(BaseService):
         Args:
             config: Patchsmith configuration
             progress_callback: Optional progress callback
+            thinking_callback: Optional callback for agent thinking updates
         """
         super().__init__(config, progress_callback)
+        self.thinking_callback = thinking_callback
 
         # Initialize adapters
         # CodeQL CLI path defaults to "codeql" (assumes it's in PATH)
@@ -80,10 +83,27 @@ class AnalysisService(BaseService):
         try:
             # Step 1: Detect languages
             self._emit_progress("language_detection_started")
+
+            # Create agent progress callback that updates the language_detection task
+            def agent_progress_callback(current_turn: int, max_turns: int):
+                # Emit progress based on agent turns
+                self._emit_progress(
+                    "agent_turn_progress",
+                    current_turn=current_turn,
+                    max_turns=max_turns,
+                )
+
             language_agent = LanguageDetectionAgent(
                 working_dir=project_path,
+                thinking_callback=self.thinking_callback,
+                progress_callback=agent_progress_callback,
             )
             languages = await language_agent.execute(project_path=project_path)
+
+            # Clear thinking display when agent completes
+            if self.thinking_callback:
+                self.thinking_callback("")
+
             self._emit_progress(
                 "language_detection_completed",
                 languages=[lang.name for lang in languages],
@@ -177,8 +197,19 @@ reports/
             triage_results = None
             if perform_triage and len(findings) > 0:
                 self._emit_progress("triage_started", finding_count=len(findings))
+
+                # Create agent progress callback for triage
+                def triage_progress_callback(current_turn: int, max_turns: int):
+                    self._emit_progress(
+                        "agent_turn_progress",
+                        current_turn=current_turn,
+                        max_turns=max_turns,
+                    )
+
                 triage_agent = TriageAgent(
                     working_dir=project_path,
+                    thinking_callback=self.thinking_callback,
+                    progress_callback=triage_progress_callback,
                 )
                 # Use max_results from config, or default to 50 for triage
                 max_findings = self.config.analysis.max_results if self.config.analysis.max_results else 50
@@ -186,6 +217,11 @@ reports/
                     findings=findings,
                     top_n=max_findings,
                 )
+
+                # Clear thinking display when agent completes
+                if self.thinking_callback:
+                    self.thinking_callback("")
+
                 recommended_count = sum(1 for t in triage_results if t.recommended_for_analysis)
                 self._emit_progress(
                     "triage_completed",
@@ -218,9 +254,19 @@ reports/
                         finding_count=len(findings_to_analyze),
                     )
 
-                    # Create analysis agent with progress callback
+                    # Create agent progress callback for detailed analysis
+                    def detailed_progress_callback(current_turn: int, max_turns: int):
+                        self._emit_progress(
+                            "agent_turn_progress",
+                            current_turn=current_turn,
+                            max_turns=max_turns,
+                        )
+
+                    # Create analysis agent with callbacks
                     analysis_agent = DetailedSecurityAnalysisAgent(
                         working_dir=project_path,
+                        thinking_callback=self.thinking_callback,
+                        progress_callback=detailed_progress_callback,
                     )
 
                     # Perform analysis with per-finding progress
@@ -228,6 +274,10 @@ reports/
                         analysis_agent,
                         findings_to_analyze,
                     )
+
+                    # Clear thinking display when agent completes
+                    if self.thinking_callback:
+                        self.thinking_callback("")
 
                     self._emit_progress(
                         "detailed_analysis_completed",

@@ -156,11 +156,31 @@ YOU MUST call the submit_languages tool to report your findings."""
             )
 
             # Query Claude with custom client
+            turn_count = 0
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(prompt)
 
                 async for message in client.receive_response():
                     message_type = type(message).__name__
+
+                    # Track turns for progress
+                    if message_type == "AssistantMessage":
+                        turn_count += 1
+                        # Emit progress based on turns
+                        self._emit_progress(turn_count)
+
+                    # Extract and emit thinking updates
+                    thinking = self._extract_thinking_from_message(message)
+                    if thinking:
+                        self._emit_thinking(thinking)
+                    else:
+                        # Debug: log why no thinking was extracted
+                        logger.debug(
+                            "no_thinking_extracted",
+                            agent=self.agent_name,
+                            message_type=message_type,
+                            has_content=hasattr(message, "content"),
+                        )
 
                     # Log all message types for debugging
                     logger.debug(
