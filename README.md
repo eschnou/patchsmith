@@ -1,58 +1,177 @@
-# Patchsmith
+# 🔒 Patchsmith
 
-**Your AI-Powered Security Apprentice: From Vulnerability Detection to Pull Request in Minutes**
+**AI-Powered Security Vulnerability Detection and Fixing**
 
-Patchsmith is an intelligent CLI tool that automates the entire security vulnerability lifecycle using CodeQL's powerful analysis engine enhanced with Claude's code understanding.
+Patchsmith combines the power of [CodeQL](https://codeql.github.com/) static analysis with [Claude AI](https://www.anthropic.com/claude) to automatically detect, triage, and fix security vulnerabilities in your codebase.
 
-## Features
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-- 🔍 **Intelligent Analysis**: Detects security vulnerabilities using CodeQL
-- 🤖 **AI-Powered**: Uses Claude to filter false positives and generate fixes
-- 🔧 **Automated Fixes**: Generates pull requests with security patches
-- 📊 **Clear Reports**: Human-readable security analysis reports
-- ⚡ **CLI-First**: Fast, terminal-based workflow
+## ✨ Features
 
-## Quick Start
+- 🔍 **Static Analysis** - Powered by GitHub's CodeQL engine
+- 🤖 **AI Triage** - Intelligent prioritization of security findings
+- 🔬 **Detailed Assessment** - Comprehensive security analysis with attack scenarios
+- 🛠️ **Automated Fixing** - AI-generated patches for vulnerabilities
+- 📊 **Rich Reports** - Detailed reports in Markdown, HTML, or text
+- 🎨 **Beautiful CLI** - Intuitive interface with progress tracking
+- 🔄 **Git Integration** - Automatic branching and commits for fixes
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+1. **Python 3.10+**
+   ```bash
+   python --version  # Should be 3.10 or higher
+   ```
+
+2. **CodeQL CLI** (required for analysis)
+   ```bash
+   # Download from GitHub releases
+   # https://github.com/github/codeql-cli-binaries/releases
+
+   # On macOS with Homebrew:
+   brew install codeql
+
+   # Verify installation:
+   codeql version
+   ```
+
+3. **Anthropic API Key** (required for AI features)
+   - Sign up at [console.anthropic.com](https://console.anthropic.com/)
+   - Get your API key
+   - Set environment variable:
+     ```bash
+     export ANTHROPIC_API_KEY='your-api-key-here'
+     ```
+
+### Installation
+
+#### Option 1: Install from Source (Development)
 
 ```bash
-# Install
-pip install patchsmith
+# Clone the repository
+git clone https://github.com/yourusername/patchsmith.git
+cd patchsmith
 
-# Initialize in your project
-patchsmith init
+# Install with Poetry
+poetry install
 
-# Run security analysis
-patchsmith analyze
-
-# Fix a vulnerability
-patchsmith fix ISSUE-001
-
-# View report
-patchsmith report
+# Run Patchsmith
+poetry run patchsmith --help
 ```
 
-## Prerequisites
+#### Option 2: Install with pip (Coming Soon)
 
-- Python 3.9+
-- CodeQL CLI (installed and in PATH)
-- Git
-- Claude API key (set `ANTHROPIC_API_KEY` environment variable)
+```bash
+pip install patchsmith
+```
 
-## Documentation
+## 📖 Usage
 
-- [User Guide](documentation/user-guide.md)
-- [Requirements](documentation/requirements.md)
-- [Technical Design](documentation/design.md)
-- [Product Pitch](documentation/product.md)
+### Initialize a Project
 
-## Development Status
+```bash
+cd /path/to/your/project
+patchsmith init
+```
 
-🚧 **Alpha** - Under active development
+### Run Security Analysis
 
-## License
+```bash
+# Analyze current directory
+patchsmith analyze
 
-TBD
+# Analyze specific project
+patchsmith analyze /path/to/project
 
-## Contributing
+# Save results to file
+patchsmith analyze -o results.json
+```
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+### Generate Report
+
+```bash
+# Generate markdown report
+patchsmith report
+
+# Generate HTML report
+patchsmith report --format html
+```
+
+### Fix Vulnerabilities
+
+```bash
+# Interactive mode (recommended)
+patchsmith fix --interactive
+
+# Fix specific finding
+patchsmith fix <finding-id>
+
+# Auto-apply fix (use with caution!)
+patchsmith fix <finding-id> --apply
+```
+
+## 📚 Documentation
+
+- **[CLI Guide](CLI_GUIDE.md)** - Complete command reference and examples
+- **[Architecture](documentation/design.md)** - Technical design and architecture
+- **[Requirements](documentation/requirements.md)** - Full requirements specification
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────┐
+│         CLI Layer (Rich UI)              │
+├─────────────────────────────────────────┤
+│  Service Layer (Business Logic)          │
+│  • AnalysisService                       │
+│  • ReportService                         │
+│  • FixService                            │
+├─────────────────────────────────────────┤
+│  Adapter Layer (External Integrations)   │
+│  • CodeQL CLI                            │
+│  • Claude AI                             │
+│  • Git                                   │
+└─────────────────────────────────────────┘
+```
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+poetry run pytest
+
+# Run with coverage
+poetry run pytest --cov
+
+# Run manual end-to-end test
+poetry run python tests/manual_test_service_layer.py /path/to/project
+```
+
+## 📋 Development Status
+
+🚧 **Alpha** - Core features implemented and working. Under active development.
+
+**Current Status:**
+- ✅ Phase 1: Foundation (Infrastructure, Models)
+- ✅ Phase 2: Adapters (CodeQL, Claude AI, Git)
+- ✅ Phase 3: Service Layer
+- ✅ Phase 4: CLI Layer
+- 🔄 Phase 5: Data Layer (Planned)
+
+## 📜 License
+
+MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **[CodeQL](https://codeql.github.com/)** - Semantic code analysis by GitHub
+- **[Claude AI](https://www.anthropic.com/claude)** - AI assistant by Anthropic
+- **[Rich](https://rich.readthedocs.io/)** - Beautiful terminal formatting
+
+---
+
+**Made with ❤️ for secure software development**
