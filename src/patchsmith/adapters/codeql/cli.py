@@ -242,20 +242,22 @@ class CodeQLCLI:
     def run_queries(
         self,
         db_path: Path,
-        query_path: Path,
+        query_path: Path | str,
         output_format: str = "sarif-latest",
         output_path: Optional[Path] = None,
         threads: int = 0,
+        download: bool = True,
     ) -> Path:
         """
         Execute CodeQL queries against a database.
 
         Args:
             db_path: Path to CodeQL database
-            query_path: Path to query file (.ql) or directory containing queries
+            query_path: Path to query file (.ql), directory, or query pack name
             output_format: Output format (sarif-latest, csv, json, etc.)
             output_path: Where to write results (auto-generated if None)
             threads: Number of threads to use (0 = auto)
+            download: Download missing query packs automatically
 
         Returns:
             Path to results file
@@ -266,7 +268,11 @@ class CodeQLCLI:
         if not self.check_database_exists(db_path):
             raise CodeQLError(f"Database does not exist: {db_path}")
 
-        if not query_path.exists():
+        # Allow query pack names (strings) or file paths
+        query_path_obj = Path(query_path) if isinstance(query_path, str) else query_path
+
+        # Only check existence if it's a file path (not a pack name)
+        if isinstance(query_path, Path) and not query_path.exists():
             raise CodeQLError(f"Query path does not exist: {query_path}")
 
         # Auto-generate output path if not provided
@@ -287,6 +293,9 @@ class CodeQLCLI:
             f"--output={output_path}",
             "--rerun",  # Always rerun queries (don't use cached results)
         ]
+
+        if download:
+            args.append("--download")  # Download missing query packs
 
         if threads > 0:
             args.append(f"--threads={threads}")

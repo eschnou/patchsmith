@@ -80,6 +80,60 @@ class FalsePositiveScore(BaseModel):
         return False
 
 
+class RiskType(str, Enum):
+    """Security risk classification types."""
+
+    EXTERNAL_PENTEST = "external_pentest"
+    INTERNAL_ABUSE = "internal_abuse"
+    SUPPLY_CHAIN = "supply_chain"
+    CONFIGURATION = "configuration"
+    DATA_EXPOSURE = "data_exposure"
+    OTHER = "other"
+
+    def __str__(self) -> str:
+        """String representation."""
+        return self.value
+
+
+class DetailedSecurityAssessment(BaseModel):
+    """Comprehensive security assessment of a finding."""
+
+    finding_id: str = Field(..., description="ID of the finding being assessed")
+
+    # False positive assessment
+    is_false_positive: bool = Field(..., description="True if likely false positive")
+    false_positive_score: float = Field(
+        ..., description="Confidence score (0.0-1.0)", ge=0.0, le=1.0
+    )
+    false_positive_reasoning: str = Field(
+        ..., description="Explanation for FP assessment"
+    )
+
+    # Security analysis
+    attack_scenario: str = Field(
+        ..., description="Description of how this vulnerability could be exploited"
+    )
+    risk_type: RiskType = Field(..., description="Classification of security risk")
+    exploitability_score: float = Field(
+        ..., description="How easily this can be exploited (0.0-1.0)", ge=0.0, le=1.0
+    )
+    impact_description: str = Field(
+        ..., description="Description of potential impact if exploited"
+    )
+    remediation_priority: str = Field(
+        ..., description="Priority level: immediate, high, medium, low"
+    )
+
+    @field_validator("remediation_priority")
+    @classmethod
+    def validate_priority(cls, v: str) -> str:
+        """Validate remediation priority is one of expected values."""
+        valid = {"immediate", "high", "medium", "low"}
+        if v.lower() not in valid:
+            raise ValueError(f"Priority must be one of: {', '.join(valid)}")
+        return v.lower()
+
+
 class Finding(BaseModel):
     """A security vulnerability finding."""
 

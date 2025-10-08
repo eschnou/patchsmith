@@ -25,7 +25,7 @@ class TestLanguageDetectionAgent:
         prompt = agent.get_system_prompt()
 
         assert "programming language detection" in prompt.lower()
-        assert "JSON" in prompt
+        assert "submit_languages" in prompt  # Tool-based approach
         assert "confidence" in prompt.lower()
 
     def test_build_analysis_prompt(self, tmp_path: Path) -> None:
@@ -38,9 +38,9 @@ class TestLanguageDetectionAgent:
         assert "50" in prompt
         assert "Glob" in prompt  # Tool instructions
 
-        # JSON format instructions should be in system prompt, not user prompt
+        # Tool-based instructions should be in system prompt
         system_prompt = agent.get_system_prompt()
-        assert "JSON" in system_prompt
+        assert "submit_languages" in system_prompt
 
     @pytest.mark.asyncio
     @patch.object(LanguageDetectionAgent, "query_claude")

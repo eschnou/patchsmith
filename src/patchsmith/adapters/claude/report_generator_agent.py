@@ -3,8 +3,8 @@
 from typing import TYPE_CHECKING
 
 from patchsmith.adapters.claude.agent import AgentError, BaseAgent
-from patchsmith.models.analysis import AnalysisResult
-from patchsmith.models.finding import Finding, Severity
+from patchsmith.models.analysis import AnalysisResult, TriageResult
+from patchsmith.models.finding import DetailedSecurityAssessment, Finding, Severity
 from patchsmith.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -57,16 +57,18 @@ Write in clear, professional technical language. Be specific and actionable."""
     async def execute(  # type: ignore[override]
         self,
         analysis_result: AnalysisResult,
+        triage_results: list[TriageResult] | None = None,
+        detailed_assessments: dict[str, DetailedSecurityAssessment] | None = None,
         report_format: str = "markdown",
-        include_false_positives: bool = False,
     ) -> str:
         """
         Generate security report from analysis results.
 
         Args:
-            analysis_result: Analysis results to report on
+            analysis_result: Analysis results with all findings
+            triage_results: Optional triage results (prioritized findings)
+            detailed_assessments: Optional detailed assessments (comprehensive analysis)
             report_format: Format for the report ("markdown", "html", "text")
-            include_false_positives: Whether to include likely false positives
 
         Returns:
             Generated report as string
@@ -78,21 +80,15 @@ Write in clear, professional technical language. Be specific and actionable."""
             "report_generation_started",
             agent=self.agent_name,
             finding_count=len(analysis_result.findings),
+            has_triage=triage_results is not None,
+            has_detailed=detailed_assessments is not None,
             format=report_format,
         )
 
         try:
-            # Filter findings if needed
-            findings_to_report = analysis_result.findings
-            if not include_false_positives:
-                findings_to_report = [
-                    f for f in findings_to_report
-                    if not f.is_likely_false_positive
-                ]
-
             # Build generation prompt
             prompt = self._build_generation_prompt(
-                analysis_result, findings_to_report, report_format
+                analysis_result, triage_results, detailed_assessments, report_format
             )
 
             # Query Claude
@@ -121,7 +117,8 @@ Write in clear, professional technical language. Be specific and actionable."""
     def _build_generation_prompt(
         self,
         analysis_result: AnalysisResult,
-        findings_to_report: list,
+        triage_results: list[TriageResult] | None,
+        detailed_assessments: dict[str, DetailedSecurityAssessment] | None,
         report_format: str,
     ) -> str:
         """
@@ -129,7 +126,8 @@ Write in clear, professional technical language. Be specific and actionable."""
 
         Args:
             analysis_result: Full analysis results
-            findings_to_report: Filtered findings to include
+            triage_results: Triage results (prioritization)
+            detailed_assessments: Detailed security assessments
             report_format: Desired report format
 
         Returns:
@@ -139,7 +137,7 @@ Write in clear, professional technical language. Be specific and actionable."""
         stats = analysis_result.statistics
         stats_text = f"""
 Statistics:
-- Total findings: {len(findings_to_report)} (of {len(analysis_result.findings)} total)
+- Total findings: {len(analysis_result.findings)}
 - Critical: {stats.get_critical_count()}
 - High: {stats.get_high_count()}
 - Medium: {stats.by_severity.get(Severity.MEDIUM, 0)}
@@ -147,14 +145,36 @@ Statistics:
 - Info: {stats.by_severity.get(Severity.INFO, 0)}
 """
 
-        # Build top findings summary (up to 10)
-        findings_text = "\n\n".join([
-            self._format_finding(f, i + 1)
-            for i, f in enumerate(findings_to_report[:10])
-        ])
+        # Build triage summary if available
+        triage_text = ""
+        if triage_results:
+            recommended = [t for t in triage_results if t.recommended_for_analysis]
+            triage_text = f"\n\nTriage Results:\n- {len(triage_results)} findings prioritized\n- {len(recommended)} recommended for detailed analysis\n"
+            if recommended:
+                triage_text += "\nTop Priority Findings:\n"
+                for i, triage in enumerate(recommended[:5], 1):
+                    triage_text += f"{i}. {triage.finding_id} (priority: {triage.priority_score:.2f})\n   {triage.reasoning}\n"
 
-        if len(findings_to_report) > 10:
-            findings_text += f"\n\n... and {len(findings_to_report) - 10} more findings"
+        # Build detailed assessments if available
+        detailed_text = ""
+        if detailed_assessments:
+            detailed_text = f"\n\nDetailed Security Assessments ({len(detailed_assessments)} findings analyzed):\n\n"
+            for finding_id, assessment in list(detailed_assessments.items())[:10]:  # Top 10
+                # Find the actual finding for more context
+                finding = next((f for f in analysis_result.findings if f.id == finding_id), None)
+                if not finding:
+                    continue
+
+                detailed_text += f"Finding: {finding_id}\n"
+                detailed_text += f"  Location: {finding.location}\n"
+                detailed_text += f"  False Positive: {'YES' if assessment.is_false_positive else 'NO'} (confidence: {assessment.false_positive_score:.2f})\n"
+                if not assessment.is_false_positive:
+                    detailed_text += f"  Attack Scenario: {assessment.attack_scenario[:150]}...\n"
+                    detailed_text += f"  Risk Type: {assessment.risk_type.value}\n"
+                    detailed_text += f"  Exploitability: {assessment.exploitability_score:.2f}\n"
+                    detailed_text += f"  Impact: {assessment.impact_description[:150]}...\n"
+                    detailed_text += f"  Priority: {assessment.remediation_priority.upper()}\n"
+                detailed_text += "\n"
 
         format_instruction = ""
         if report_format == "markdown":
@@ -164,16 +184,21 @@ Statistics:
 
         return f"""Generate a comprehensive security analysis report.
 
-{stats_text}
-
-Key Findings:
-{findings_text}
+{stats_text}{triage_text}{detailed_text}
 
 Project analyzed: {analysis_result.project_name}
 Languages: {', '.join(analysis_result.languages_analyzed) if analysis_result.languages_analyzed else 'Unknown'}
 Analyzed at: {analysis_result.timestamp.isoformat()}{format_instruction}
 
-Create a professional security report following the standard structure."""
+Create a professional security report with:
+1. Executive Summary (highlighting most critical issues)
+2. Overview Statistics
+3. Prioritized Findings (focus on high-priority items from detailed analysis)
+4. Detailed Analysis (for assessed findings, include attack scenarios and remediation priorities)
+5. Recommendations
+
+Use the triage results to show which issues were prioritized and why.
+Use the detailed assessments to provide depth on attack scenarios and impacts."""
 
     def _format_finding(self, finding: Finding, index: int) -> str:
         """

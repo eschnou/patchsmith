@@ -1,6 +1,7 @@
 """Analysis result models."""
 
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -35,6 +36,19 @@ class AnalysisStatistics(BaseModel):
     def get_actionable_count(self) -> int:
         """Get count of critical and high severity findings."""
         return self.get_critical_count() + self.get_high_count()
+
+
+class TriageResult(BaseModel):
+    """Result of triaging a single finding for prioritization."""
+
+    finding_id: str = Field(..., description="ID of the triaged finding")
+    priority_score: float = Field(
+        ..., description="Priority score (0.0-1.0, higher = more critical)", ge=0.0, le=1.0
+    )
+    reasoning: str = Field(..., description="Explanation for why this was prioritized")
+    recommended_for_analysis: bool = Field(
+        ..., description="Whether this should get detailed analysis"
+    )
 
 
 class AnalysisResult(BaseModel):

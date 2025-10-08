@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, create_sdk_mcp_server, tool
 from pydantic import BaseModel, Field
 
 from patchsmith.adapters.claude.agent import AgentError, BaseAgent
@@ -14,6 +15,60 @@ if TYPE_CHECKING:
     pass
 
 logger = get_logger()
+
+
+# Storage for tool results
+_fix_proposal: dict | None = None
+
+
+@tool(
+    "submit_fix_proposal",
+    "Submit a proposed security fix for a vulnerability",
+    {
+        "original_code": str,  # Exact vulnerable code to replace
+        "fixed_code": str,  # Secure replacement code
+        "explanation": str,  # Clear explanation of the fix
+        "confidence": float,  # 0.0-1.0 confidence score
+    },
+)
+async def submit_fix_proposal_tool(args: dict) -> dict:
+    """Tool for submitting fix proposals."""
+    global _fix_proposal
+
+    # Handle JSON string input
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            logger.error("submit_fix_proposal_invalid_json", data=str(args)[:200])
+            return {
+                "content": [
+                    {"type": "text", "text": "Error: Invalid JSON format"}
+                ]
+            }
+
+    _fix_proposal = {
+        "original_code": args.get("original_code", ""),
+        "fixed_code": args.get("fixed_code", ""),
+        "explanation": args.get("explanation", ""),
+        "confidence": float(args.get("confidence", 0.0)),
+    }
+
+    logger.info(
+        "fix_proposal_submitted",
+        confidence=_fix_proposal["confidence"],
+        has_original=len(_fix_proposal["original_code"]) > 0,
+        has_fixed=len(_fix_proposal["fixed_code"]) > 0,
+    )
+
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": f"Fix proposal recorded with confidence {_fix_proposal['confidence']:.2f}",
+            }
+        ]
+    }
 
 
 class Fix(BaseModel):
@@ -32,8 +87,9 @@ class Fix(BaseModel):
 class FixGeneratorAgent(BaseAgent):
     """Agent for generating security vulnerability fixes using Claude AI.
 
-    This agent analyzes vulnerable code and generates patches with explanations,
-    ensuring fixes are safe and don't introduce new issues.
+    This agent analyzes vulnerable code and generates patches with explanations.
+    It does NOT apply fixes - that's the responsibility of the calling code.
+    The agent only has Read access to examine code, not Write/Git access.
     """
 
     def get_system_prompt(self) -> str:
@@ -41,35 +97,48 @@ class FixGeneratorAgent(BaseAgent):
         return """You are a security-focused software engineer specializing in vulnerability remediation.
 
 Your expertise includes:
-- Understanding common vulnerability patterns (SQL injection, XSS, etc.)
+- Understanding common vulnerability patterns (SQL injection, XSS, CSRF, etc.)
 - Writing secure code following best practices
 - Language-specific security libraries and frameworks
 - Minimal, focused fixes that don't break functionality
 - Defensive programming techniques
 
 When generating fixes:
-1. Analyze the vulnerable code in full context
+1. Use Read tool to examine the vulnerable code in full context
 2. Identify the root cause of the vulnerability
-3. Propose a minimal fix that addresses the issue
-4. Preserve existing functionality and code style
-5. Use secure coding patterns and libraries
-6. Explain the fix clearly
+3. Propose a minimal fix that addresses the security issue
+4. Preserve existing functionality, code style, and formatting
+5. Use secure coding patterns and language-specific security libraries
+6. Provide clear technical explanation
 
-Always respond with ONLY a JSON object in this exact format:
+You have access to:
+- Read: Examine source files to understand code context
+- submit_fix_proposal: Submit your fix proposal (YOU MUST call this)
+
+Process:
+1. Use Read tool to examine the source file around the vulnerability
+2. Analyze the vulnerable code pattern
+3. Design a secure fix that addresses the root cause
+4. Ensure the fix is minimal and maintains functionality
+5. Call submit_fix_proposal tool with your fix
+
+The submit_fix_proposal tool expects:
 {
-  "original_code": "The exact vulnerable code to replace",
-  "fixed_code": "The secure replacement code",
-  "explanation": "Clear explanation of what was changed and why",
-  "confidence": 0.9
+  "original_code": "def vulnerable():\\n    query = \\"SELECT * WHERE id=\\" + user_input",
+  "fixed_code": "def secure():\\n    query = \\"SELECT * WHERE id=?\\"\\n    cursor.execute(query, (user_input,))",
+  "explanation": "Replaced string concatenation with parameterized query to prevent SQL injection",
+  "confidence": 0.95
 }
 
 Requirements:
-- original_code: Exact code snippet to be replaced (must match source file)
-- fixed_code: Secure replacement (maintain formatting and style)
+- original_code: Exact code snippet to replace (must match source file exactly)
+- fixed_code: Secure replacement (maintain indentation and style)
 - explanation: Technical explanation for developers
-- confidence: Float 0.0-1.0 (how confident you are the fix is correct)
+- confidence: 0.0-1.0 (only suggest fixes you're confident are correct)
 
-Only suggest fixes you're confident are correct and won't break functionality."""
+If you cannot generate a safe fix with high confidence (>0.7), set confidence low and explain why in the explanation.
+
+YOU MUST call the submit_fix_proposal tool to report your fix."""
 
     async def execute(  # type: ignore[override]
         self,
@@ -84,11 +153,14 @@ Only suggest fixes you're confident are correct and won't break functionality.""
             context_lines: Number of context lines to include around the vulnerability
 
         Returns:
-            Fix object if successful, None if no fix could be generated
+            Fix object if successful (confidence >0.7), None if no fix could be generated
 
         Raises:
             AgentError: If fix generation fails
         """
+        global _fix_proposal
+        _fix_proposal = None  # Reset
+
         logger.info(
             "fix_generation_started",
             agent=self.agent_name,
@@ -97,32 +169,96 @@ Only suggest fixes you're confident are correct and won't break functionality.""
         )
 
         try:
+            # Create MCP server with custom tool
+            server = create_sdk_mcp_server(
+                name="fix-generator",
+                version="1.0.0",
+                tools=[submit_fix_proposal_tool],
+            )
+
             # Build generation prompt
             prompt = self._build_generation_prompt(finding, context_lines)
 
-            # Query Claude
-            response = await self.query_claude(
-                prompt=prompt,
-                max_turns=3,  # May need discussion to clarify requirements
-                allowed_tools=["Read"],  # Allow reading source files for context
+            # Configure options with custom tool
+            options = ClaudeAgentOptions(
+                system_prompt=self.get_system_prompt(),
+                max_turns=100,  # High limit for thorough analysis
+                allowed_tools=["Read", "mcp__fix-generator__submit_fix_proposal"],
+                mcp_servers={"fix-generator": server},
+                cwd=str(self.working_dir),
             )
 
-            # Parse response
-            fix = self._parse_response(response, finding)
+            # Query Claude with custom client
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
 
-            if fix:
-                logger.info(
-                    "fix_generation_completed",
-                    agent=self.agent_name,
-                    finding_id=finding.id,
-                    confidence=fix.confidence,
-                )
-            else:
+                async for message in client.receive_response():
+                    message_type = type(message).__name__
+
+                    logger.debug(
+                        "agent_received_message",
+                        agent=self.agent_name,
+                        message_type=message_type,
+                        finding_id=finding.id,
+                    )
+
+                    # Check for tool use
+                    if message_type == "AssistantMessage" and hasattr(message, "content"):
+                        for item in message.content if isinstance(message.content, list) else []:
+                            if hasattr(item, "type") and item.type == "tool_use":
+                                logger.info(
+                                    "tool_use_detected",
+                                    agent=self.agent_name,
+                                    finding_id=finding.id,
+                                    tool_name=getattr(item, "name", "unknown"),
+                                )
+
+                    # Log final result
+                    if message_type == "ResultMessage":
+                        logger.info(
+                            "result_message_received",
+                            agent=self.agent_name,
+                            finding_id=finding.id,
+                            subtype=getattr(message, "subtype", "unknown"),
+                            num_turns=getattr(message, "num_turns", 0),
+                        )
+
+            # Check if tool was called
+            if _fix_proposal is None:
                 logger.warning(
-                    "fix_generation_no_fix",
+                    "fix_generation_no_proposal",
                     agent=self.agent_name,
                     finding_id=finding.id,
                 )
+                return None
+
+            # Check confidence threshold
+            if _fix_proposal["confidence"] < 0.7:
+                logger.info(
+                    "fix_generation_low_confidence",
+                    agent=self.agent_name,
+                    finding_id=finding.id,
+                    confidence=_fix_proposal["confidence"],
+                    explanation=_fix_proposal["explanation"][:100],
+                )
+                return None
+
+            # Create Fix object
+            fix = Fix(
+                finding_id=finding.id,
+                file_path=finding.file_path,
+                original_code=_fix_proposal["original_code"],
+                fixed_code=_fix_proposal["fixed_code"],
+                explanation=_fix_proposal["explanation"],
+                confidence=_fix_proposal["confidence"],
+            )
+
+            logger.info(
+                "fix_generation_completed",
+                agent=self.agent_name,
+                finding_id=finding.id,
+                confidence=fix.confidence,
+            )
 
             return fix
 
@@ -151,102 +287,29 @@ Only suggest fixes you're confident are correct and won't break functionality.""
             Generation prompt
         """
         cwe_info = f" ({finding.cwe.id})" if finding.cwe else ""
-        snippet_info = f"\n\nVulnerable code:\n```\n{finding.snippet}\n```" if finding.snippet else ""
+        snippet_info = f"\n\nVulnerable code snippet:\n```\n{finding.snippet}\n```" if finding.snippet else ""
 
         return f"""Generate a security fix for this vulnerability.
 
 Finding details:
+- ID: {finding.id}
 - Rule: {finding.rule_id}
 - Severity: {finding.severity.value.upper()}{cwe_info}
 - Message: {finding.message}
 - Location: {finding.location}{snippet_info}
 
-Use the Read tool to examine the source file at {finding.file_path} around line {finding.start_line}.
-Read {context_lines} lines before and after for full context.
+Steps:
+1. Use Read tool to examine {finding.file_path} around line {finding.start_line}
+   (read at least {context_lines} lines before/after for full context)
+2. Analyze the vulnerability pattern
+3. Design a secure fix that addresses the root cause
+4. Ensure the fix is minimal and maintains existing functionality
+5. Call submit_fix_proposal tool with your fix
 
-Analyze the vulnerability and propose a secure fix as a JSON object.
-If you cannot generate a safe fix with high confidence, explain why in the explanation field and set confidence to 0.0."""
+Important:
+- original_code must EXACTLY match the code in the source file (including whitespace)
+- fixed_code should maintain the same indentation and code style
+- Only propose fixes you're confident are correct and safe (confidence >0.7)
+- If uncertain, explain why and set confidence low
 
-    def _parse_response(self, response: str, finding: Finding) -> Fix | None:
-        """
-        Parse Claude's response into a Fix object.
-
-        Args:
-            response: Claude's response text
-            finding: Original finding
-
-        Returns:
-            Fix object if parsing successful, None otherwise
-
-        Raises:
-            AgentError: If parsing fails
-        """
-        try:
-            # Find JSON in response
-            json_start = response.find("{")
-            json_end = response.rfind("}") + 1
-
-            if json_start == -1 or json_end == 0:
-                logger.warning(
-                    "fix_parse_no_json",
-                    finding_id=finding.id,
-                    response_preview=response[:200],
-                )
-                return None
-
-            json_str = response[json_start:json_end]
-            data = json.loads(json_str)
-
-            if not isinstance(data, dict):
-                logger.warning(
-                    "fix_parse_not_object",
-                    finding_id=finding.id,
-                )
-                return None
-
-            # Check for low confidence (no fix)
-            confidence = float(data.get("confidence", 0.0))
-            if confidence < 0.5:
-                logger.info(
-                    "fix_low_confidence",
-                    finding_id=finding.id,
-                    confidence=confidence,
-                    explanation=data.get("explanation", "Unknown"),
-                )
-                return None
-
-            # Validate required fields
-            required = ["original_code", "fixed_code", "explanation", "confidence"]
-            if not all(field in data for field in required):
-                logger.warning(
-                    "fix_parse_missing_fields",
-                    finding_id=finding.id,
-                    missing=[f for f in required if f not in data],
-                )
-                return None
-
-            # Create Fix object
-            return Fix(
-                finding_id=finding.id,
-                file_path=finding.file_path,
-                original_code=str(data["original_code"]),
-                fixed_code=str(data["fixed_code"]),
-                explanation=str(data["explanation"]),
-                confidence=confidence,
-            )
-
-        except json.JSONDecodeError as e:
-            logger.warning(
-                "fix_parse_json_error",
-                finding_id=finding.id,
-                error=str(e),
-                response_preview=response[:200],
-            )
-            return None
-        except Exception as e:
-            logger.error(
-                "fix_parse_error",
-                finding_id=finding.id,
-                error=str(e),
-            )
-            raise AgentError(f"Failed to parse fix response: {e}") from e
+Remember: You MUST use the submit_fix_proposal tool to report your fix."""

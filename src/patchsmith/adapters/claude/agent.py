@@ -27,7 +27,7 @@ class BaseAgent(ABC):
     def __init__(
         self,
         working_dir: Path | None = None,
-        max_turns: int = 10,
+        max_turns: int = 100,
         allowed_tools: list[str] | None = None,
     ) -> None:
         """
@@ -87,6 +87,7 @@ class BaseAgent(ABC):
         system_prompt: str | None = None,
         max_turns: int | None = None,
         allowed_tools: list[str] | None = None,
+        custom_tools: list[dict] | None = None,
     ) -> str:
         """
         Query Claude Code with a prompt.
