@@ -29,14 +29,14 @@ from patchsmith.services.fix_service import FixService
     help="Project path (default: current directory)"
 )
 @click.option(
-    "--no-pr",
+    "--with-pr",
     is_flag=True,
-    help="Keep branch local (don't push or create PR)"
+    help="Commit changes, push branch, and create PR (for CI/CD automation)"
 )
 def fix(
     finding_id: str,
     path: Path | None,
-    no_pr: bool,
+    with_pr: bool,
 ) -> None:
     """Autonomously fix a security vulnerability.
 
@@ -45,13 +45,13 @@ def fix(
       1. Creates a Git branch (fix/<finding-id>)
       2. Launches AI agent with Write access
       3. Agent examines code and writes fix
-      4. Commits all changes
-      5. Pushes branch and creates PR (unless --no-pr)
+      4. Leaves changes uncommitted (default)
+      5. With --with-pr: commits, pushes, and creates PR
 
     \b
     Examples:
-        patchsmith fix F-1                     # Fix and create PR
-        patchsmith fix F-1 --no-pr             # Fix locally only
+        patchsmith fix F-1                     # Fix locally (no commit/PR)
+        patchsmith fix F-1 --with-pr           # Fix, commit, push, create PR
         patchsmith fix F-5 --path /path        # Fix in specific project
     """
     # Use current directory if no path provided
@@ -61,25 +61,27 @@ def fix(
     console.print(f"\n[bold cyan]🤖 Patchsmith Autonomous Fix[/bold cyan]")
     console.print(f"Project: [yellow]{path}[/yellow]")
     console.print(f"Finding: [yellow]{finding_id}[/yellow]")
-    if no_pr:
-        console.print(f"[yellow]Mode: Local only (no push/PR)[/yellow]")
+    if with_pr:
+        console.print(f"[green]Mode: Commit + Push + PR (CI/CD)[/green]")
+    else:
+        console.print(f"[yellow]Mode: Local fix only (no commit)[/yellow]")
     console.print()
 
     # Run autonomous fix
-    asyncio.run(_autonomous_fix(path, finding_id, no_pr))
+    asyncio.run(_autonomous_fix(path, finding_id, with_pr))
 
 
-async def _autonomous_fix(path: Path, finding_id: str, no_pr: bool) -> None:
+async def _autonomous_fix(path: Path, finding_id: str, with_pr: bool) -> None:
     """Run autonomous fix workflow.
 
     Args:
         path: Project path
         finding_id: Finding ID to fix
-        no_pr: Skip push and PR creation
+        with_pr: If True, commit changes, push branch, and create PR
     """
     try:
         # Load finding from cache
-        results_file = path / ".patchsmith_results.json"
+        results_file = path / ".patchsmith" / "results.json"
         if not results_file.exists():
             print_error("No cached analysis results found")
             print_info("Run 'patchsmith analyze' first to analyze the project")
@@ -143,7 +145,7 @@ async def _autonomous_fix(path: Path, finding_id: str, no_pr: bool) -> None:
             result, message = await fix_service.autonomous_fix(
                 finding=finding,
                 working_dir=path,
-                skip_push_and_pr=no_pr,
+                commit_and_pr=with_pr,
             )
 
         console.print()

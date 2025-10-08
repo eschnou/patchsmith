@@ -47,7 +47,7 @@ def list_findings(path: Path | None, severity: str | None, limit: int | None) ->
         path = Path.cwd()
 
     # Load analysis results
-    results_file = path / ".patchsmith_results.json"
+    results_file = path / ".patchsmith" / "results.json"
     if not results_file.exists():
         print_error(
             "No analysis results found. Run 'patchsmith analyze' first."

@@ -134,7 +134,7 @@ async def _generate_report(
             print_success("Analysis completed!")
         else:
             # Load from cached results (default)
-            results_file = path / ".patchsmith_results.json"
+            results_file = path / ".patchsmith" / "results.json"
             if not results_file.exists():
                 print_error("No cached analysis results found")
                 print_info("Run 'patchsmith analyze' first, or use --force-analysis to run analysis now")

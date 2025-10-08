@@ -71,7 +71,7 @@ async def _run_investigation(finding_id: str, project_path: Path) -> None:
         project_path: Path to project
     """
     # Load previous analysis results
-    results_file = project_path / ".patchsmith_results.json"
+    results_file = project_path / ".patchsmith" / "results.json"
     if not results_file.exists():
         print_error(
             f"No analysis results found. Run 'patchsmith analyze' first."
@@ -223,7 +223,7 @@ def _save_assessment_to_cache(
         finding_id: ID of the finding
         assessment: Detailed security assessment to save
     """
-    results_file = project_path / ".patchsmith_results.json"
+    results_file = project_path / ".patchsmith" / "results.json"
     if not results_file.exists():
         return
 

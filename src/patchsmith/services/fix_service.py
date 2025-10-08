@@ -260,7 +260,7 @@ class FixService(BaseService):
         self,
         finding: Finding,
         working_dir: Path,
-        skip_push_and_pr: bool = False,
+        commit_and_pr: bool = False,
     ) -> tuple[FixResult | None, str]:
         """
         Autonomously fix a vulnerability using AI agent with Write access.
@@ -269,16 +269,15 @@ class FixService(BaseService):
         1. Creates a Git branch
         2. Launches autonomous agent with Write access
         3. Agent modifies files directly to fix vulnerability
-        4. Commits all changes
-        5. Pushes branch and creates PR (unless skip_push_and_pr=True)
+        4. Optionally commits, pushes, and creates PR (if commit_and_pr=True)
 
         Args:
             finding: Finding to fix
             working_dir: Working directory (project root)
-            skip_push_and_pr: If True, keep branch local (don't push or create PR)
+            commit_and_pr: If True, commit changes, push branch, and create PR
 
         Returns:
-            Tuple of (result: FixResult | None, message: str with PR URL or error)
+            Tuple of (result: FixResult | None, message: str with status/PR URL or error)
 
         Raises:
             Exception: If fix fails (after rollback)
@@ -350,9 +349,7 @@ class FixService(BaseService):
 
                 return None, f"Fix abandoned: {result.reason}"
 
-            # 3. Agent succeeded - commit all changes
-            self._emit_progress("git_committing", finding_id=finding.id)
-
+            # 3. Check if changes were made
             if not repo.has_uncommitted_changes():
                 # Agent completed but made no changes - unexpected
                 logger.warning(
@@ -362,49 +359,55 @@ class FixService(BaseService):
                 repo.checkout_branch(original_branch)
                 return None, "Agent completed but made no file changes"
 
-            # Stage all modified files
-            repo.stage_all()
+            # 4. Commit and PR workflow (optional)
+            if commit_and_pr:
+                # Stage all modified files
+                self._emit_progress("git_committing", finding_id=finding.id)
+                repo.stage_all()
 
-            # Create commit message
-            commit_message = self._generate_commit_message(finding, result)
-            repo.commit(commit_message, allow_protected=False)
+                # Create commit message
+                commit_message = self._generate_commit_message(finding, result)
+                repo.commit(commit_message, allow_protected=False)
 
-            self._emit_progress("git_committed", branch_name=branch_name)
+                self._emit_progress("git_committed", branch_name=branch_name)
 
-            # 4. Push branch (unless skipped)
-            if not skip_push_and_pr:
+                # Push branch
                 self._emit_progress("git_pushing", branch_name=branch_name)
                 try:
                     repo.push_branch(set_upstream=True)
                     self._emit_progress("git_pushed", branch_name=branch_name)
                 except Exception as e:
                     logger.warning("git_push_failed", error=str(e))
-                    # Continue anyway - local branch is created
-                    skip_push_and_pr = True  # Don't try PR if push failed
-
-                # 5. Create PR
-                if not skip_push_and_pr:
-                    pr_url = self._create_pull_request(finding, result, branch_name, working_dir)
-
+                    # If push fails, return with local message
                     self._emit_progress(
                         "autonomous_fix_completed",
                         finding_id=finding.id,
-                        pr_url=pr_url or "no PR created",
+                        local_only=True,
                     )
+                    return result, f"Branch {branch_name} created and committed locally (push failed: {e})"
 
-                    if pr_url:
-                        return result, pr_url
-                    else:
-                        return result, f"Branch {branch_name} created and pushed (no PR - install 'gh' CLI)"
+                # Create PR
+                pr_url = self._create_pull_request(finding, result, branch_name, working_dir)
 
-            # Local only mode
+                self._emit_progress(
+                    "autonomous_fix_completed",
+                    finding_id=finding.id,
+                    pr_url=pr_url or "no PR created",
+                )
+
+                if pr_url:
+                    return result, pr_url
+                else:
+                    return result, f"Branch {branch_name} created and pushed (no PR - install 'gh' CLI)"
+
+            # Default: Local fix only (no commit)
             self._emit_progress(
                 "autonomous_fix_completed",
                 finding_id=finding.id,
                 local_only=True,
             )
 
-            return result, f"Branch {branch_name} created locally (not pushed)"
+            return result, f"Branch {branch_name} created with uncommitted changes"
 
         except Exception as e:
             # Rollback on any error

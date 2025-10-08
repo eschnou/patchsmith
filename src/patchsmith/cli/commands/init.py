@@ -88,6 +88,9 @@ def init(path: Path | None, name: str | None, save_api_key: bool) -> None:
     gitignore_content = """# Patchsmith temporary files - do not commit
 # Only config.json should be committed
 
+# Analysis results cache
+results.json
+
 # CodeQL databases
 db_*/
 

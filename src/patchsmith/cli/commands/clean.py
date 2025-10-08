@@ -31,7 +31,7 @@ def clean(path: Path | None, hard: bool, yes: bool) -> None:
 
     \b
     By default, removes:
-      • .patchsmith_results.json (cached analysis data)
+      • .patchsmith/results.json (cached analysis data)
       • .patchsmith_reports/ (generated reports)
 
     \b
@@ -55,7 +55,7 @@ def clean(path: Path | None, hard: bool, yes: bool) -> None:
     # Identify items to clean
     items_to_clean = []
 
-    results_file = path / ".patchsmith_results.json"
+    results_file = path / ".patchsmith" / "results.json"
     if results_file.exists():
         items_to_clean.append(("Cached results", results_file, "file"))
 

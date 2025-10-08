@@ -138,7 +138,9 @@ async def _run_analysis(
 
         # Always save results for investigate/list commands
         import json
-        results_file = path / ".patchsmith_results.json"
+        patchsmith_dir = path / ".patchsmith"
+        patchsmith_dir.mkdir(exist_ok=True)
+        results_file = patchsmith_dir / "results.json"
 
         # Preserve existing detailed assessments from previous investigations
         existing_assessments = {}

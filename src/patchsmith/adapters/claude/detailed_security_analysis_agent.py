@@ -141,6 +141,9 @@ You have access to:
 - Read: Examine source files to understand code context
 - submit_detailed_assessment: Submit your comprehensive analysis (YOU MUST call this)
 
+IMPORTANT: You do NOT have Bash, Write, or any system modification tools.
+You can only READ code and submit your analysis.
+
 Process:
 1. Use Read tool to examine the vulnerable code and surrounding context
 2. Analyze the vulnerability thoroughly
