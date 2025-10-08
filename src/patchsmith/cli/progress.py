@@ -2,7 +2,9 @@
 
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
+from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
@@ -12,6 +14,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 
 console = Console()
 
@@ -28,19 +31,63 @@ class ProgressTracker:
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
-            console=console,
+            console=console,  # CRITICAL: Keep this for logging coordination
         )
         self.tasks: dict[str, TaskID] = {}
         self.current_phase: str | None = None
+        self.thinking_panel: Panel | None = None
+        self.live: Live | None = None
 
     def __enter__(self) -> "ProgressTracker":
         """Enter context manager."""
-        self.progress.__enter__()
+        # Wrap progress + thinking panel in Live for stable display
+        self.live = Live(
+            self._get_renderable(),
+            console=console,
+            refresh_per_second=10,
+        )
+        self.live.__enter__()
         return self
 
     def __exit__(self, *args: Any) -> None:
         """Exit context manager."""
-        self.progress.__exit__(*args)
+        if self.live:
+            self.live.__exit__(*args)
+
+    def _get_renderable(self) -> Group:
+        """Get the renderable group with progress and optional thinking panel."""
+        renderables = []
+
+        # Add thinking panel if present
+        if self.thinking_panel:
+            renderables.append(self.thinking_panel)
+
+        # Add progress
+        renderables.append(self.progress)
+
+        return Group(*renderables)
+
+    def update_thinking(self, message: str) -> None:
+        """Update agent thinking status.
+
+        Args:
+            message: Agent thinking message
+        """
+        if message:
+            # Create/update thinking panel (blue box that doesn't move)
+            self.thinking_panel = Panel(
+                Text(message, style="cyan"),
+                title="💭 Agent Thinking",
+                border_style="blue",
+                padding=(0, 1),
+            )
+        else:
+            # Clear thinking panel
+            self.thinking_panel = None
+
+        # Update the live display
+        if self.live:
+            self.live.update(self._get_renderable())
 
     def handle_progress(self, event: str, data: dict[str, Any]) -> None:
         """Handle progress event from service layer.
