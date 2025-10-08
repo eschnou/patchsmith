@@ -1,0 +1,165 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "organization": "GitHub",
+          "semanticVersion": "2.15.3",
+          "rules": [
+            {
+              "id": "py/sql-injection",
+              "name": "py/sql-injection",
+              "shortDescription": {
+                "text": "SQL query built from user-controlled sources"
+              },
+              "fullDescription": {
+                "text": "Building a SQL query from user-controlled sources is vulnerable to insertion of malicious SQL code by the user."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-89"
+                ],
+                "kind": "path-problem",
+                "precision": "high",
+                "problem.severity": "error"
+              }
+            },
+            {
+              "id": "py/command-injection",
+              "name": "py/command-injection",
+              "shortDescription": {
+                "text": "Uncontrolled command line"
+              },
+              "fullDescription": {
+                "text": "Using externally controlled strings in a command line may allow a malicious user to execute arbitrary commands."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-78"
+                ],
+                "kind": "path-problem",
+                "precision": "high",
+                "problem.severity": "error"
+              }
+            },
+            {
+              "id": "py/clear-text-logging-sensitive-data",
+              "name": "py/clear-text-logging-sensitive-data",
+              "shortDescription": {
+                "text": "Clear-text logging of sensitive information"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-312"
+                ],
+                "precision": "medium",
+                "problem.severity": "warning"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "py/sql-injection",
+          "ruleIndex": 0,
+          "message": {
+            "text": "This SQL query depends on a user-provided value."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/database.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 42,
+                  "startColumn": 12,
+                  "endLine": 42,
+                  "endColumn": 65,
+                  "snippet": {
+                    "text": "cursor.execute(f\"SELECT * FROM users WHERE id = {user_id}\")"
+                  }
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "abcd1234:1"
+          },
+          "level": "error"
+        },
+        {
+          "ruleId": "py/command-injection",
+          "ruleIndex": 1,
+          "message": {
+            "text": "This command depends on a user-provided value."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/app.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 15,
+                  "startColumn": 5,
+                  "endLine": 15,
+                  "endColumn": 35,
+                  "snippet": {
+                    "text": "os.system(f\"echo {user_input}\")"
+                  }
+                }
+              }
+            }
+          ],
+          "level": "error"
+        },
+        {
+          "ruleId": "py/clear-text-logging-sensitive-data",
+          "ruleIndex": 2,
+          "message": {
+            "text": "This expression logs sensitive data (password) in plain text."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/auth.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 28,
+                  "startColumn": 9,
+                  "endLine": 28,
+                  "endColumn": 50,
+                  "snippet": {
+                    "text": "logger.info(f\"User login: {username} {password}\")"
+                  }
+                }
+              }
+            }
+          ],
+          "level": "warning"
+        }
+      ]
+    }
+  ]
+}

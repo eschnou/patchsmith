@@ -13,7 +13,6 @@ classifiers = [
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -21,13 +20,15 @@ classifiers = [
 packages = [{include = "patchsmith", from = "src"}]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
 click = "^8.1.7"
 anthropic = "^0.39.0"
 rich = "^13.7.0"
 structlog = "^24.1.0"
 pydantic = "^2.5.0"
 aiofiles = "^24.1.0"
+pyyaml = "^6.0.3"
+claude-agent-sdk = "^0.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
@@ -36,6 +37,7 @@ pytest-cov = "^4.1.0"
 black = "^24.1.0"
 mypy = "^1.8.0"
 ruff = "^0.1.15"
+types-pyyaml = "^6.0.12.20250915"
 
 [tool.poetry.scripts]
 patchsmith = "patchsmith.cli.main:cli"
@@ -46,7 +48,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 100
-target-version = ['py39']
+target-version = ['py310']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -63,7 +65,7 @@ extend-exclude = '''
 '''
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -83,12 +85,13 @@ module = [
     "anthropic.*",
     "rich.*",
     "structlog.*",
+    "claude_agent_sdk.*",
 ]
 ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
