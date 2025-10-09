@@ -23,13 +23,13 @@ from patchsmith.services.analysis_service import AnalysisService
     "--investigate",
     is_flag=True,
     default=False,
-    help="Run triage and investigate recommended findings with AI"
+    help="Investigate recommended finding groups (AI-powered)"
 )
 @click.option(
     "--investigate-all",
     is_flag=True,
     default=False,
-    help="Investigate ALL findings with AI (skip triage)"
+    help="Investigate ALL finding groups (AI-powered, thorough)"
 )
 @click.option(
     "--output",
@@ -53,16 +53,19 @@ def analyze(
     """Run security analysis on a project.
 
     \b
+    All modes include triage for finding grouping and prioritization.
+
+    \b
     Analysis Modes:
-      • Default: CodeQL analysis only (fast, no AI)
-      • --investigate: Triage + investigate recommended findings (AI-powered)
-      • --investigate-all: Investigate ALL findings (AI-powered, thorough)
+      • Default: CodeQL + triage (fast, grouping only)
+      • --investigate: + investigate recommended groups (AI-powered)
+      • --investigate-all: + investigate ALL groups (AI-powered, thorough)
 
     \b
     Examples:
-        patchsmith analyze                        # Quick CodeQL scan
-        patchsmith analyze --investigate          # Triage + investigate top findings
-        patchsmith analyze --investigate-all      # Deep analysis of all findings
+        patchsmith analyze                        # CodeQL scan + triage/grouping
+        patchsmith analyze --investigate          # + investigate top priority groups
+        patchsmith analyze --investigate-all      # + investigate all finding groups
         patchsmith analyze --custom-only          # Run only custom queries
         patchsmith analyze -o results.json        # Save results to file
     """
@@ -104,8 +107,8 @@ async def _run_analysis(
 
     Args:
         path: Path to project
-        investigate: Whether to triage and investigate recommended findings
-        investigate_all: Whether to investigate all findings (skip triage)
+        investigate: Whether to investigate recommended finding groups from triage
+        investigate_all: Whether to investigate ALL finding groups (regardless of recommendation)
         output_path: Optional path to save results
         custom_only: Whether to run only custom queries
     """
@@ -117,8 +120,11 @@ async def _run_analysis(
         )
 
         # Determine analysis parameters based on flags
-        perform_triage = investigate  # Triage only when --investigate
+        # Always triage for grouping/prioritization
+        perform_triage = True
         perform_detailed_analysis = investigate or investigate_all
+        # For --investigate-all, analyze all groups (not just recommended)
+        investigate_all_groups = investigate_all
         detailed_analysis_limit = None  # Analyze all that match criteria
 
         # Create progress tracker
@@ -135,6 +141,7 @@ async def _run_analysis(
                 project_path=path,
                 perform_triage=perform_triage,
                 perform_detailed_analysis=perform_detailed_analysis,
+                investigate_all_groups=investigate_all_groups,
                 detailed_analysis_limit=detailed_analysis_limit,
                 custom_only=custom_only,
             )
@@ -153,14 +160,19 @@ async def _run_analysis(
             detailed_count=len(detailed_assessments) if detailed_assessments else 0,
         )
 
-        # Show top findings
+        # Show top findings (with grouping if triage was performed)
         if analysis_result.findings:
-            # Sort by severity
-            sorted_findings = sorted(
-                analysis_result.findings,
-                key=lambda f: ["critical", "high", "medium", "low", "info"].index(f.severity.value),
-            )
-            print_findings_table(sorted_findings, limit=10)
+            if triage_results:
+                # Show triage results (includes grouping information)
+                from patchsmith.cli.progress import print_triage_table
+                print_triage_table(triage_results, analysis_result.findings, limit=10)
+            else:
+                # Show raw findings (no grouping)
+                sorted_findings = sorted(
+                    analysis_result.findings,
+                    key=lambda f: ["critical", "high", "medium", "low", "info"].index(f.severity.value),
+                )
+                print_findings_table(sorted_findings, limit=10)
 
             # Show next steps
             console.print("[bold cyan]Next Steps:[/bold cyan]")
@@ -236,6 +248,8 @@ async def _run_analysis(
                     "priority_score": t.priority_score,
                     "recommended_for_analysis": t.recommended_for_analysis,
                     "reasoning": t.reasoning,
+                    "related_finding_ids": t.related_finding_ids,
+                    "group_pattern": t.group_pattern,
                 }
                 for t in (triage_results or [])
             ],

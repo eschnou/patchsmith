@@ -96,28 +96,29 @@ def list_findings(path: Path | None, severity: str | None, limit: int | None) ->
     console.print()
 
     table = Table(show_lines=True)
-    table.add_column("ID", style="cyan bold", width=8)
+    table.add_column("ID", style="cyan bold", width=12)
     table.add_column("Priority", style="magenta", width=10)
     table.add_column("Severity", style="bold", width=10)
-    table.add_column("Rule", style="yellow", width=35)
-    table.add_column("Location", style="green", width=45)
+    table.add_column("Rule", style="yellow", width=30)
+    table.add_column("Location", style="green", width=40)
+
+    # Build a map of triage results for quick lookup
+    triage_map = {}
+    has_groups = False
+    if triage_results:
+        triage_map = {t["finding_id"]: t for t in triage_results}
 
     for finding in findings:
-        # Get priority score from triage
-        priority_score = 0.0
-        if triage_results:
-            triage = next(
-                (t for t in triage_results if t["finding_id"] == finding["id"]), None
-            )
-            if triage:
-                priority_score = triage["priority_score"]
+        # Get triage info
+        triage = triage_map.get(finding["id"])
+        priority_score = triage["priority_score"] if triage else 0.0
 
         # Color priority score
-        if priority_score >= 8.0:
+        if priority_score >= 0.8:
             priority_color = "red"
-        elif priority_score >= 6.0:
+        elif priority_score >= 0.6:
             priority_color = "yellow"
-        elif priority_score >= 4.0:
+        elif priority_score >= 0.4:
             priority_color = "blue"
         else:
             priority_color = "dim"
@@ -131,17 +132,30 @@ def list_findings(path: Path | None, severity: str | None, limit: int | None) ->
             "info": "dim",
         }.get(finding["severity"], "white")
 
+        # ID with group indicator
+        id_display = finding["id"]
+        if triage:
+            related_ids = triage.get("related_finding_ids", [])
+            if related_ids:
+                has_groups = True
+                total_instances = 1 + len(related_ids)
+                id_display = f"{finding['id']} 🔗×{total_instances}"
+
         table.add_row(
-            finding["id"],
-            f"[{priority_color}]{priority_score:.1f}[/{priority_color}]"
+            id_display,
+            f"[{priority_color}]{priority_score:.2f}[/{priority_color}]"
             if priority_score > 0
             else "-",
             f"[{severity_color}]{finding['severity'].upper()}[/{severity_color}]",
-            finding["rule_id"][:35],
+            finding["rule_id"][:30],
             f"{Path(finding['file_path']).name}:{finding['start_line']}",
         )
 
     console.print(table)
+
+    # Show legend if there are grouped findings
+    if has_groups:
+        console.print("[dim]🔗 = Grouped finding (multiple instances)[/dim]")
     console.print()
 
     # Show next steps

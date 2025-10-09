@@ -609,11 +609,38 @@ class ReportHtmlFormatter(BaseReportFormatter):
             for finding in low_findings:
                 lines.append(self._format_finding(finding))
 
-        # Other findings
+        # Other findings (lower-priority, triaged but not deeply analyzed)
         if no_priority_findings:
-            lines.append("<h3>📋 Other Findings</h3>")
-            for finding in no_priority_findings:
-                lines.append(self._format_finding(finding))
+            lines.append('<h3>📋 Additional Findings (Triaged, Not Deeply Analyzed)</h3>')
+            lines.append(f'<p style="background: #f8f9f9; padding: 12px; border-left: 4px solid #95a5a6; margin: 10px 0;"><strong>{len(no_priority_findings)} finding(s) identified during triage</strong> - These findings were analyzed and prioritized, but not selected for detailed AI security assessment. They are organized by priority score and include grouping information.</p>')
+
+            # Show summary table
+            lines.append('<table style="width: 100%; border-collapse: collapse; margin: 20px 0;">')
+            lines.append('<thead><tr style="background: #ecf0f1;">')
+            lines.append('<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Finding ID</th>')
+            lines.append('<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Priority</th>')
+            lines.append('<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Severity</th>')
+            lines.append('<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Rule</th>')
+            lines.append('<th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Location</th>')
+            lines.append('</tr></thead><tbody>')
+
+            for finding in no_priority_findings[:20]:  # Limit to 20
+                group_indicator = f' 🔗×{finding.total_instances}' if finding.is_grouped else ''
+                severity_emoji = self._get_severity_emoji(finding.severity)
+                lines.append('<tr>')
+                lines.append(f'<td style="padding: 12px; border: 1px solid #ddd;"><span class="code">{html_module.escape(finding.finding_id)}{group_indicator}</span></td>')
+                lines.append(f'<td style="padding: 12px; border: 1px solid #ddd;">{finding.priority_score:.2f}</td>')
+                lines.append(f'<td style="padding: 12px; border: 1px solid #ddd;">{severity_emoji} {finding.severity.upper()}</td>')
+                lines.append(f'<td style="padding: 12px; border: 1px solid #ddd;">{html_module.escape(finding.title[:40])}</td>')
+                lines.append(f'<td style="padding: 12px; border: 1px solid #ddd;"><span class="code">{html_module.escape(finding.location[:50])}</span></td>')
+                lines.append('</tr>')
+
+            lines.append('</tbody></table>')
+
+            if len(no_priority_findings) > 20:
+                lines.append(f'<p><em>... and {len(no_priority_findings) - 20} more lower-priority findings</em></p>')
+
+            lines.append('<p style="background: #d1ecf1; padding: 12px; border-left: 4px solid #17a2b8; margin: 10px 0;">💡 <strong>Note</strong>: To see detailed analysis of these findings, re-run analysis with <code>--investigate-all</code> flag.</p>')
 
         return "\n".join(lines)
 
@@ -653,14 +680,36 @@ class ReportHtmlFormatter(BaseReportFormatter):
         priority_bar_empty = "░" * (10 - priority_pct // 10)
         priority_bar = f"{priority_bar_filled}{priority_bar_empty}"
 
+        # Add group indicator to title if this is a grouped finding
+        title = html_module.escape(finding.title)
+        if finding.is_grouped:
+            title = f"{title} 🔗 ({finding.total_instances} instances)"
+
         lines = [
             f'<div class="finding-card" style="border-left-color: {border_color};">',
-            f"    <h4>{html_module.escape(finding.title)}</h4>",
+            f"    <h4>{title}</h4>",
             '    <div class="finding-meta">',
             f'        <p><strong>Finding ID:</strong> <span class="code">{html_module.escape(finding.finding_id)}</span> | ',
             f'        <strong>Severity:</strong> <span class="badge severity-{finding.severity.lower()}">{self._get_severity_emoji(finding.severity)} {finding.severity.upper()}</span></p>',
-            f'        <p><strong>📍 Location:</strong> <span class="code">{html_module.escape(finding.location)}</span></p>',
         ]
+
+        # Show grouping information if applicable
+        if finding.is_grouped:
+            lines.append(f'        <p><strong>🔗 Grouped Finding:</strong> {finding.total_instances} instances of the same pattern</p>')
+            if finding.group_pattern:
+                lines.append(f'        <p><strong>📋 Pattern:</strong> {html_module.escape(finding.group_pattern)}</p>')
+            lines.append(f'        <p><strong>Representative Location:</strong></p>')
+            lines.append(f'        <ul><li><span class="code">{html_module.escape(finding.location)}</span></li></ul>')
+            lines.append(f'        <p><strong>Related Instances:</strong></p>')
+            lines.append('        <ul>')
+            # Show first 5 related findings with locations
+            for fid, loc in zip(finding.related_finding_ids[:5], finding.related_locations[:5]):
+                lines.append(f'            <li><span class="code">{html_module.escape(fid)}</span> at <span class="code">{html_module.escape(loc)}</span></li>')
+            if len(finding.related_finding_ids) > 5:
+                lines.append(f'            <li><em>... and {len(finding.related_finding_ids) - 5} more instances</em></li>')
+            lines.append('        </ul>')
+        else:
+            lines.append(f'        <p><strong>📍 Location:</strong> <span class="code">{html_module.escape(finding.location)}</span></p>')
 
         if finding.cwe:
             lines.append(f'        <p><strong>🔖 CWE:</strong> {html_module.escape(finding.cwe)}</p>')

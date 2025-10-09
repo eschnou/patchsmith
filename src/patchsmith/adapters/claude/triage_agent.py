@@ -91,6 +91,7 @@ Your expertise includes:
 - Identifying patterns in security findings
 - Balancing severity, exploitability, and impact
 - Recognizing common false positive patterns
+- Grouping similar findings to avoid redundant investigations
 
 When triaging findings, consider:
 - Severity level (critical > high > medium > low)
@@ -100,15 +101,50 @@ When triaging findings, consider:
 - Likelihood of being a false positive
 - Patterns across multiple findings
 
+**IMPORTANT - Finding Grouping:**
+If multiple findings share the same vulnerability pattern (e.g., "5 instances of missing-await in wallet.ts"), you should GROUP them to avoid redundant AI investigations:
+
+1. Identify findings with the same rule_id and similar contexts (same file, same function, same pattern)
+2. Select ONE representative finding (typically the first one or most critical example)
+3. In the representative's entry, include:
+   - related_finding_ids: list of all OTHER finding IDs in the group (not including the representative)
+   - group_pattern: descriptive label (e.g., "Missing await in wallet.ts functions")
+4. **CRITICAL**: Return ONLY the representative, NOT the related instances as separate entries
+
+**Grouping Example:**
+If you find F-20, F-21, F-22, F-23, F-24, F-25 are all "missing-await in wallet.ts":
+- Return ONLY F-20 as the representative
+- Set F-20's related_finding_ids = ["F-21", "F-22", "F-23", "F-24", "F-25"]
+- Do NOT return F-21 through F-25 as separate entries
+
+Example of grouped finding:
+{
+  "finding_id": "F-3",  // representative
+  "priority_score": 0.85,
+  "reasoning": "Missing await pattern on isSessionOpen found in 5 locations",
+  "recommended_for_analysis": true,
+  "related_finding_ids": ["F-1", "F-2", "F-4", "F-5"],  // other instances
+  "group_pattern": "Missing await on isSessionOpen"
+}
+
 You have access to:
 - submit_triage_results: Submit your prioritization (YOU MUST call this with your results)
 
 Process:
 1. Review all findings provided in the prompt
-2. Analyze patterns, severity distribution, and vulnerability types
-3. Prioritize top 10-20 findings that need detailed investigation
-4. For each prioritized finding, assign a priority score (0.0-1.0) and provide reasoning
-5. Call submit_triage_results tool with your prioritized list
+2. Identify patterns and group similar findings (same rule_id AND similar context)
+3. For each group, select ONE representative finding - do NOT return the others
+4. Assign priority scores (0.0-1.0) to all groups/individual findings
+5. Mark top priority findings/groups for detailed investigation (you'll be told how many)
+6. Provide reasoning for all entries, especially high-priority ones
+7. Call submit_triage_results tool with all DISTINCT groups/findings
+
+**IMPORTANT**:
+- Return one entry per DISTINCT vulnerability pattern (not per raw finding)
+- If 6 findings share the same pattern → return 1 entry (representative) with related_finding_ids containing the other 5
+- If a finding is unique → return it as a standalone entry with empty related_finding_ids
+- The number of entries you return = number of distinct patterns/groups, NOT the total raw finding count
+- Mark the top N groups/findings as `recommended_for_analysis: true`, rest as `false`
 
 The submit_triage_results tool expects:
 {
@@ -117,25 +153,36 @@ The submit_triage_results tool expects:
       "finding_id": "sql-injection_app.py_42",
       "priority_score": 0.95,
       "reasoning": "Critical SQL injection in authentication code with user input",
-      "recommended_for_analysis": true
+      "recommended_for_analysis": true,
+      "related_finding_ids": [],  // Optional: other findings in group
+      "group_pattern": null  // Optional: pattern description
     },
     ...
   ]
 }
 
-Requirements:
-- finding_id: exact ID from the findings list
+Requirements (for EACH finding):
+- finding_id: exact ID from the findings list (representative)
 - priority_score: float 0.0-1.0 (higher = more critical)
-- reasoning: brief explanation (1-2 sentences)
-- recommended_for_analysis: true for top findings, false for lower priority
+- reasoning: brief explanation (1-2 sentences, mention if grouped)
+- recommended_for_analysis: true for top priority findings, false for others
+- related_finding_ids: (optional) list of other finding IDs in the same group
+- group_pattern: (optional) description of the common pattern
 
-Select up to ten findings for detailed analysis. Focus on:
+When setting `recommended_for_analysis`:
+- Mark the TOP priority findings/groups as `true` (you'll be told how many in the prompt)
+- These will receive detailed AI security analysis
+- All others should be `false`
+- But ALL findings must be returned with scores and grouping
+
+Prioritization criteria for top findings:
 - Highest severity with clear exploitation paths
 - Vulnerabilities in critical code paths
 - Issues with significant potential impact
 - Findings that are unlikely to be false positives
+- Group similar findings throughout ALL findings to reduce redundancy
 
-YOU MUST call the submit_triage_results tool to report your prioritization."""
+YOU MUST call the submit_triage_results tool with ALL findings triaged."""
 
     async def execute(  # type: ignore[override]
         self,
@@ -292,9 +339,9 @@ YOU MUST call the submit_triage_results tool to report your prioritization."""
         else:
             additional_info = ""
 
-        return f"""Triage these security findings and identify the top {top_n} that need detailed investigation.
+        return f"""Triage security findings and identify distinct vulnerability patterns.
 
-Total findings: {len(findings)}
+Total raw findings: {len(findings)}
 
 Findings to analyze:
 ```json
@@ -302,13 +349,26 @@ Findings to analyze:
 ```{additional_info}
 
 Steps:
-1. Analyze the findings by severity, type, and context
-2. Identify patterns and critical vulnerabilities
-3. Select up to {top_n} findings for detailed analysis
-4. For each, assign a priority score (0.0-1.0) and provide reasoning
-5. Call submit_triage_results tool with your prioritized list
+1. Review all findings by severity, type, location, and context
+2. **Group similar findings**: If multiple findings share the same rule_id AND similar context (same file, same function, same pattern), group them into ONE entry
+3. For each group, select ONE representative (do not include related instances as separate entries)
+4. Assign priority scores (0.0-1.0) to each distinct group/finding
+5. Mark the top {top_n} highest priority groups with `recommended_for_analysis: true`
+6. Mark all other groups with `recommended_for_analysis: false`
+7. Call submit_triage_results with all DISTINCT groups/patterns (NOT all raw findings)
 
-Remember: Focus on findings with highest risk and clearest exploitation paths."""
+**CRITICAL GROUPING RULES**:
+- Same rule_id + same file + similar pattern = GROUP them (e.g., 6× "missing-await" in wallet.ts → 1 entry)
+- Same rule_id + different files = SEPARATE entries (different contexts)
+- Different rule_ids = SEPARATE entries (different vulnerability types)
+- Return COUNT = number of distinct patterns, NOT raw finding count
+
+**Example**: If you see:
+- F-20, F-21, F-22, F-23, F-24, F-25: all "js/missing-await" in wallet.ts
+- Return ONLY F-20 with related_finding_ids = ["F-21", "F-22", "F-23", "F-24", "F-25"]
+- Do NOT return F-21 through F-25 as separate entries
+
+Your goal: Return {top_n} highly prioritized groups + all other distinct groups (not recommended), with proper grouping to avoid redundant investigations."""
 
     def _parse_triage_results(self, results: list[dict]) -> list[TriageResult]:
         """
@@ -337,12 +397,23 @@ Remember: Focus on findings with highest risk and clearest exploitation paths.""
                     logger.warning("triage_missing_fields", item=item)
                     continue
 
+                # Extract optional grouping fields
+                related_ids = item.get("related_finding_ids", [])
+                if not isinstance(related_ids, list):
+                    related_ids = []
+
+                group_pattern = item.get("group_pattern")
+                if group_pattern == "null" or group_pattern == "":
+                    group_pattern = None
+
                 # Create TriageResult object
                 triage_result = TriageResult(
                     finding_id=item["finding_id"],
                     priority_score=float(item["priority_score"]),
                     reasoning=item["reasoning"],
                     recommended_for_analysis=bool(item["recommended_for_analysis"]),
+                    related_finding_ids=related_ids,
+                    group_pattern=group_pattern,
                 )
                 triage_results.append(triage_result)
 

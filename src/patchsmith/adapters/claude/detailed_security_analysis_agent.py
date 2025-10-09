@@ -102,6 +102,13 @@ Your expertise includes:
 - Risk classification and impact analysis
 - Code analysis and vulnerability validation
 - Remediation prioritization
+- Pattern recognition across multiple vulnerability instances
+
+**IMPORTANT:** You may be analyzing either:
+- A single finding (standard analysis)
+- A GROUP of related findings sharing the same vulnerability pattern (grouped analysis)
+
+When analyzing a GROUP, your assessment should reflect the systemic nature of the issue and consider cumulative impact across all instances.
 
 When analyzing findings, you must assess:
 
@@ -159,12 +166,14 @@ YOU MUST call the submit_detailed_assessment tool to report your analysis."""
     async def execute(  # type: ignore[override]
         self,
         findings: list[Finding],
+        finding_groups: dict[str, list[str]] | None = None,
     ) -> dict[str, DetailedSecurityAssessment]:
         """
         Perform detailed security analysis on findings.
 
         Args:
             findings: List of findings to analyze (typically pre-triaged top N)
+            finding_groups: Optional dict mapping representative finding_id to list of related finding_ids
 
         Returns:
             Dictionary mapping finding_id to DetailedSecurityAssessment
@@ -193,8 +202,11 @@ YOU MUST call the submit_detailed_assessment tool to report your analysis."""
                 _detailed_assessment = None  # Reset for each finding
 
                 try:
-                    # Build analysis prompt
-                    prompt = self._build_analysis_prompt(finding)
+                    # Check if this finding has related findings (is a group representative)
+                    related_ids = finding_groups.get(finding.id, []) if finding_groups else []
+
+                    # Build analysis prompt (with group context if applicable)
+                    prompt = self._build_analysis_prompt(finding, related_ids)
 
                     # Configure options with custom tool
                     options = ClaudeAgentOptions(
@@ -306,18 +318,36 @@ YOU MUST call the submit_detailed_assessment tool to report your analysis."""
             )
             raise AgentError(f"Detailed security analysis failed: {e}") from e
 
-    def _build_analysis_prompt(self, finding: Finding) -> str:
+    def _build_analysis_prompt(self, finding: Finding, related_finding_ids: list[str] | None = None) -> str:
         """
-        Build prompt for analyzing a specific finding.
+        Build prompt for analyzing a specific finding or group of findings.
 
         Args:
-            finding: Finding to analyze
+            finding: Representative finding to analyze
+            related_finding_ids: Optional list of related finding IDs in the same group
 
         Returns:
             Analysis prompt
         """
         cwe_info = f" ({finding.cwe.id})" if finding.cwe else ""
         snippet_info = f"\n\nCode snippet:\n```\n{finding.snippet}\n```" if finding.snippet else ""
+
+        # Add group context if this is a grouped finding
+        group_info = ""
+        if related_finding_ids:
+            group_info = f"""
+
+**GROUPED FINDING NOTICE:**
+This finding represents a GROUP of {len(related_finding_ids) + 1} similar instances of the same vulnerability pattern.
+- Representative instance: {finding.id}
+- Related instances: {', '.join(related_finding_ids)}
+
+When analyzing, consider:
+- This is a SYSTEMIC issue appearing in multiple locations
+- Your analysis should address the pattern as a whole, not just this single instance
+- Impact assessment should reflect the cumulative risk across all instances
+- Remediation may require a systematic fix rather than point changes
+"""
 
         return f"""Perform comprehensive security analysis on this finding.
 
@@ -326,7 +356,7 @@ Finding details:
 - Rule: {finding.rule_id}
 - Severity: {finding.severity.value.upper()}{cwe_info}
 - Location: {finding.location}
-- Message: {finding.message}{snippet_info}
+- Message: {finding.message}{snippet_info}{group_info}
 
 Steps:
 1. Use Read tool to examine {finding.file_path} for full context
@@ -334,7 +364,7 @@ Steps:
 3. If legitimate, develop a detailed attack scenario
 4. Classify the risk type (external_pentest, internal_abuse, etc.)
 5. Assess exploitability (0.0-1.0)
-6. Describe the potential impact
+6. Describe the potential impact{' across all instances' if related_finding_ids else ''}
 7. Set remediation priority (immediate, high, medium, low)
 8. Call submit_detailed_assessment tool with your complete analysis
 

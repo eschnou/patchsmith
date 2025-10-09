@@ -238,12 +238,27 @@ class ReportMarkdownFormatter(BaseReportFormatter):
                 lines.extend(self._format_finding(finding))
             lines.append("")
 
-        # Findings without remediation priority (shouldn't happen but handle gracefully)
+        # Findings without remediation priority (lower-priority findings from triage, not deeply analyzed)
         if no_priority_findings:
-            lines.append("### 📋 Other Findings")
+            lines.append("### 📋 Additional Findings (Triaged, Not Deeply Analyzed)")
             lines.append("")
-            for finding in no_priority_findings:
-                lines.extend(self._format_finding(finding))
+            lines.append(f"**{len(no_priority_findings)} finding(s) identified during triage** - These findings were analyzed and prioritized, but not selected for detailed AI security assessment. They are organized by priority score and include grouping information.")
+            lines.append("")
+
+            # Show a summary table for these
+            lines.append("| Finding ID | Priority | Severity | Rule | Location |")
+            lines.append("|------------|----------|----------|------|----------|")
+            for finding in no_priority_findings[:20]:  # Limit detailed display
+                group_indicator = f" 🔗×{finding.total_instances}" if finding.is_grouped else ""
+                severity_emoji = self._get_severity_emoji(finding.severity)
+                lines.append(f"| {finding.finding_id}{group_indicator} | {finding.priority_score:.2f} | {severity_emoji} {finding.severity.upper()} | {finding.title[:40]} | {finding.location[:40]} |")
+
+            if len(no_priority_findings) > 20:
+                lines.append("")
+                lines.append(f"*... and {len(no_priority_findings) - 20} more lower-priority findings*")
+
+            lines.append("")
+            lines.append("💡 **Note**: To see detailed analysis of these findings, re-run analysis with `--investigate-all` flag.")
             lines.append("")
 
         return "\n".join(lines)
@@ -274,13 +289,37 @@ class ReportMarkdownFormatter(BaseReportFormatter):
         priority_pct = int(finding.priority_score * 100)
         priority_bar = "█" * (priority_pct // 10) + "░" * (10 - priority_pct // 10)
 
+        # Add group indicator to title if this is a grouped finding
+        title = finding.title
+        if finding.is_grouped:
+            title = f"{finding.title} 🔗 ({finding.total_instances} instances)"
+
         lines = [
-            f"#### {finding.title}",
+            f"#### {title}",
             "",
             f"**Finding ID:** `{finding.finding_id}` | **Severity:** {severity_badge}",
             "",
-            f"**📍 Location:** `{finding.location}`  ",
         ]
+
+        # Show grouping information if applicable
+        if finding.is_grouped:
+            lines.append(f"**🔗 Grouped Finding:** {finding.total_instances} instances of the same pattern  ")
+            if finding.group_pattern:
+                lines.append(f"**📋 Pattern:** {finding.group_pattern}  ")
+            lines.append("")
+            lines.append("**Representative Location:**")
+            lines.append(f"- `{finding.location}`")
+            lines.append("")
+            lines.append("**Related Instances:**")
+            # Show first 5 related findings with locations
+            for idx, (fid, loc) in enumerate(zip(finding.related_finding_ids[:5], finding.related_locations[:5])):
+                lines.append(f"- `{fid}` at `{loc}`")
+            if len(finding.related_finding_ids) > 5:
+                lines.append(f"- *... and {len(finding.related_finding_ids) - 5} more instances*")
+            lines.append("")
+        else:
+            lines.append(f"**📍 Location:** `{finding.location}`  ")
+            lines.append("")
 
         if finding.cwe:
             lines.append(f"**🔖 CWE:** {finding.cwe}  ")

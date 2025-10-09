@@ -147,6 +147,16 @@ Your expertise includes:
 - Identifying key security risks and priorities
 - Providing actionable remediation recommendations
 - Writing clear, professional security guidance
+- Recognizing systemic patterns across multiple vulnerability instances
+
+**IMPORTANT - Grouped Findings:**
+Some findings may be GROUPED, meaning multiple instances of the same vulnerability pattern were identified and consolidated into a single representative finding for efficiency.
+
+When you see "[GROUP: X instances - pattern]" notation:
+- This indicates a systemic issue appearing in X locations
+- Your assessment should reflect the cumulative risk and scope
+- Recommendations should address the pattern systematically, not just individual instances
+- The impact is magnified by the number of instances
 
 Your role is to provide NARRATIVE CONTENT ONLY:
 1. overall_assessment - 2-3 paragraphs describing the overall security posture
@@ -335,7 +345,15 @@ Statistics:
             if recommended:
                 triage_text += "\nTop Priority Findings:\n"
                 for i, triage in enumerate(recommended[:5], 1):
-                    triage_text += f"{i}. {triage.finding_id} (priority: {triage.priority_score:.2f})\n   {triage.reasoning}\n"
+                    # Show group information if this is a grouped finding
+                    if triage.is_group_representative:
+                        group_info = f" [GROUP: {triage.total_instances} instances - {triage.group_pattern}]"
+                        related_ids = ", ".join(triage.related_finding_ids[:3])
+                        if len(triage.related_finding_ids) > 3:
+                            related_ids += f", +{len(triage.related_finding_ids) - 3} more"
+                        triage_text += f"{i}. {triage.finding_id}{group_info}\n   Related: {related_ids}\n   {triage.reasoning}\n"
+                    else:
+                        triage_text += f"{i}. {triage.finding_id} (priority: {triage.priority_score:.2f})\n   {triage.reasoning}\n"
 
         # Build detailed assessments if available
         detailed_text = ""
@@ -461,11 +479,8 @@ Call submit_report_content tool with your narrative content."""
             # Build prioritized findings from triage + detailed assessments
             prioritized_findings = []
             if triage_results:
-                # Use triage results to prioritize
+                # Use triage results to process ALL findings (not just recommended)
                 for triage in triage_results:
-                    if not triage.recommended_for_analysis:
-                        continue  # Skip low-priority findings
-
                     # Find the actual finding
                     finding_match = next(
                         (f for f in analysis_result.findings if f.id == triage.finding_id),
@@ -476,19 +491,41 @@ Call submit_report_content tool with your narrative content."""
 
                     finding = finding_match
 
-                    # Get detailed assessment if available
-                    assessment = detailed_assessments.get(triage.finding_id) if detailed_assessments else None
+                    # Get detailed assessment if available (only for recommended findings)
+                    assessment = None
+                    if triage.recommended_for_analysis and detailed_assessments:
+                        assessment = detailed_assessments.get(triage.finding_id)
 
-                    # Build FindingPriority
+                    # Collect related locations if this is a grouped finding
+                    related_locations = []
+                    if triage.related_finding_ids:
+                        for related_id in triage.related_finding_ids:
+                            related_finding = next(
+                                (f for f in analysis_result.findings if f.id == related_id),
+                                None
+                            )
+                            if related_finding:
+                                related_locations.append(related_finding.location)
+
+                    # Clean up the message (CodeQL data flow queries repeat message for each path)
+                    # Take only the first occurrence to avoid repetition in reports
+                    clean_message = finding.message.split('\n')[0] if finding.message else finding.message
+
+                    # Build FindingPriority for ALL findings (recommended and non-recommended)
                     finding_priority = FindingPriority(
                         finding_id=finding.id,
                         title=finding.rule_id,  # Use rule_id as title
                         severity=finding.severity.value,
                         location=finding.location,
-                        description=finding.message,
+                        description=clean_message,
                         priority_score=triage.priority_score,
                         reasoning=triage.reasoning,
                         cwe=finding.cwe.id if finding.cwe else None,
+                        # Grouping fields
+                        related_finding_ids=triage.related_finding_ids,
+                        group_pattern=triage.group_pattern,
+                        related_locations=related_locations,
+                        # Detailed analysis fields (only populated for recommended findings)
                         is_false_positive=assessment.is_false_positive if assessment else False,
                         attack_scenario=assessment.attack_scenario if assessment and not assessment.is_false_positive else None,
                         risk_type=assessment.risk_type.value if assessment and not assessment.is_false_positive else None,

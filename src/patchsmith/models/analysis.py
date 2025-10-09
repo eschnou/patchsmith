@@ -39,9 +39,9 @@ class AnalysisStatistics(BaseModel):
 
 
 class TriageResult(BaseModel):
-    """Result of triaging a single finding for prioritization."""
+    """Result of triaging a single finding or group of related findings for prioritization."""
 
-    finding_id: str = Field(..., description="ID of the triaged finding")
+    finding_id: str = Field(..., description="ID of the representative finding")
     priority_score: float = Field(
         ..., description="Priority score (0.0-1.0, higher = more critical)", ge=0.0, le=1.0
     )
@@ -49,6 +49,30 @@ class TriageResult(BaseModel):
     recommended_for_analysis: bool = Field(
         ..., description="Whether this should get detailed analysis"
     )
+
+    # Grouping fields for collating similar findings
+    related_finding_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs of other findings that share the same vulnerability pattern"
+    )
+    group_pattern: str | None = Field(
+        default=None,
+        description="Description of the common pattern (e.g., 'Missing await on isSessionOpen')"
+    )
+
+    @property
+    def is_group_representative(self) -> bool:
+        """Check if this triage result represents a group of findings."""
+        return len(self.related_finding_ids) > 0
+
+    @property
+    def total_instances(self) -> int:
+        """Get total number of findings in this group (including representative)."""
+        return 1 + len(self.related_finding_ids)
+
+    def get_all_finding_ids(self) -> list[str]:
+        """Get all finding IDs in this group (representative + related)."""
+        return [self.finding_id] + self.related_finding_ids
 
 
 class AnalysisResult(BaseModel):

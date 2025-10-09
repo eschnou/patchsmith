@@ -68,7 +68,7 @@ class StatisticsOverview(BaseModel):
 class FindingPriority(BaseModel):
     """Prioritized finding with context for the report."""
 
-    finding_id: str = Field(..., description="Finding identifier")
+    finding_id: str = Field(..., description="Finding identifier (representative)")
     title: str = Field(..., description="Short title/summary of the finding")
     severity: str = Field(..., description="Severity level (critical, high, medium, low)")
     location: str = Field(..., description="File path and line number")
@@ -78,6 +78,20 @@ class FindingPriority(BaseModel):
     )
     reasoning: str = Field(..., description="Why this was prioritized")
     cwe: str | None = Field(None, description="CWE identifier if available")
+
+    # Grouping fields (for collated similar findings)
+    related_finding_ids: list[str] = Field(
+        default_factory=list,
+        description="IDs of related findings in the same group"
+    )
+    group_pattern: str | None = Field(
+        None,
+        description="Description of the common pattern if this is a group"
+    )
+    related_locations: list[str] = Field(
+        default_factory=list,
+        description="Locations of related findings in the group"
+    )
 
     # Detailed analysis fields (if available)
     is_false_positive: bool = Field(default=False, description="True if false positive")
@@ -92,6 +106,16 @@ class FindingPriority(BaseModel):
     remediation_priority: str | None = Field(
         None, description="Remediation priority (immediate, high, medium, low)"
     )
+
+    @property
+    def is_grouped(self) -> bool:
+        """Check if this finding represents a group."""
+        return len(self.related_finding_ids) > 0
+
+    @property
+    def total_instances(self) -> int:
+        """Get total number of instances (representative + related)."""
+        return 1 + len(self.related_finding_ids)
 
 
 class RecommendationItem(BaseModel):

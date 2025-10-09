@@ -165,8 +165,14 @@ class ProgressTracker:
             total = data.get("total", 1)
             finding_id = data.get("finding_id", "unknown")
             severity = data.get("severity", "unknown")
+            is_group = data.get("is_group", False)
+            total_instances = data.get("total_instances", 1)
 
-            description = f"Analyzing {finding_id} ({current}/{total}) - {severity}"
+            # Build description with group information
+            if is_group:
+                description = f"Analyzing {finding_id} 🔗×{total_instances} ({current}/{total}) - {severity}"
+            else:
+                description = f"Analyzing {finding_id} ({current}/{total}) - {severity}"
 
             # Update or create detailed analysis task with actual progress
             base_event = "detailed_analysis_started"
@@ -324,6 +330,67 @@ def print_findings_table(findings: list[Any], limit: int = 10) -> None:
         )
 
     console.print(table)
+    console.print()
+
+
+def print_triage_table(triage_results: list[Any], findings: list[Any], limit: int = 10) -> None:
+    """Print triage results in a formatted table with grouping information.
+
+    Args:
+        triage_results: List of TriageResult objects (sorted by priority)
+        findings: List of Finding objects (for lookup)
+        limit: Maximum number of triage results to display
+    """
+    table = Table(title=f"Top {min(limit, len(triage_results))} Prioritized Findings", show_lines=True)
+
+    table.add_column("ID", style="cyan bold", no_wrap=True, width=12)
+    table.add_column("Priority", style="bold", width=10)
+    table.add_column("Severity", style="bold", width=10)
+    table.add_column("Rule", style="yellow", width=30)
+    table.add_column("Location", style="green", width=35)
+
+    for triage in triage_results[:limit]:
+        # Find the corresponding finding
+        finding = next((f for f in findings if f.id == triage.finding_id), None)
+        if not finding:
+            continue
+
+        # Priority score color
+        priority_score = triage.priority_score
+        if priority_score >= 0.8:
+            priority_color = "red"
+        elif priority_score >= 0.6:
+            priority_color = "yellow"
+        else:
+            priority_color = "blue"
+
+        # Severity color
+        severity_color = {
+            "critical": "red",
+            "high": "yellow",
+            "medium": "blue",
+            "low": "dim",
+        }.get(finding.severity.value, "white")
+
+        # ID with group indicator
+        id_display = finding.id
+        if triage.is_group_representative:
+            id_display = f"{finding.id} 🔗×{triage.total_instances}"
+
+        table.add_row(
+            id_display,
+            f"[{priority_color}]{priority_score:.2f}[/{priority_color}]",
+            f"[{severity_color}]{finding.severity.value.upper()}[/{severity_color}]",
+            finding.rule_id[:30],
+            f"{finding.file_path.name}:{finding.start_line}",
+        )
+
+    console.print(table)
+
+    # Show legend if there are grouped findings
+    has_groups = any(t.is_group_representative for t in triage_results[:limit])
+    if has_groups:
+        console.print("[dim]🔗 = Grouped finding (multiple instances)[/dim]")
     console.print()
 
 

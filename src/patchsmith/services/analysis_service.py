@@ -63,6 +63,7 @@ class AnalysisService(BaseService):
         project_path: Path,
         perform_triage: bool = True,
         perform_detailed_analysis: bool = True,
+        investigate_all_groups: bool = False,
         detailed_analysis_limit: int | None = None,
         custom_only: bool = False,
     ) -> tuple[AnalysisResult, list[TriageResult] | None, dict[str, DetailedSecurityAssessment] | None]:
@@ -71,9 +72,10 @@ class AnalysisService(BaseService):
 
         Args:
             project_path: Path to project to analyze
-            perform_triage: Whether to perform triage (prioritization)
-            perform_detailed_analysis: Whether to perform detailed analysis on top findings
-            detailed_analysis_limit: Max findings to analyze in detail (None = all recommended)
+            perform_triage: Whether to perform triage (grouping and prioritization)
+            perform_detailed_analysis: Whether to perform detailed analysis on findings
+            investigate_all_groups: If True, investigate all groups; if False, only recommended
+            detailed_analysis_limit: Max findings to analyze in detail (None = all that match criteria)
             custom_only: Whether to run only custom queries (skip standard queries)
 
         Returns:
@@ -308,11 +310,13 @@ reports/
                     thinking_callback=self.thinking_callback,
                     progress_callback=triage_progress_callback,
                 )
-                # Use max_results from config, or default to 50 for triage
-                max_findings = self.config.analysis.max_results if self.config.analysis.max_results else 50
+                # Top N findings/groups to mark for detailed AI investigation
+                # Note: max_results is for loading findings from CodeQL (1000+)
+                # This top_n is for deep investigation - keep it reasonable (10-15)
+                top_n_investigate = 10
                 triage_results = await triage_agent.execute(
                     findings=findings,
-                    top_n=max_findings,
+                    top_n=top_n_investigate,
                 )
 
                 # Clear thinking display when agent completes
@@ -333,22 +337,26 @@ reports/
                 findings_to_analyze = []
 
                 if triage_results:
-                    # Case 1: Triage was performed, analyze recommended findings
-                    recommended = [t for t in triage_results if t.recommended_for_analysis]
+                    # Triage was performed - work with grouped findings
+                    if investigate_all_groups:
+                        # --investigate-all: analyze ALL groups (not just recommended)
+                        triage_to_process = triage_results
+                    else:
+                        # --investigate: analyze only recommended groups
+                        triage_to_process = [t for t in triage_results if t.recommended_for_analysis]
 
-                    # Apply limit if specified, otherwise analyze all recommended
-                    findings_to_process = (
-                        recommended[:detailed_analysis_limit]
-                        if detailed_analysis_limit is not None
-                        else recommended
-                    )
+                    # Apply limit if specified
+                    if detailed_analysis_limit is not None:
+                        triage_to_process = triage_to_process[:detailed_analysis_limit]
 
-                    for triage in findings_to_process:
+                    # Convert triage results to findings
+                    for triage in triage_to_process:
                         finding = next((f for f in findings if f.id == triage.finding_id), None)
                         if finding:
                             findings_to_analyze.append(finding)
                 else:
-                    # Case 2: No triage, analyze all findings (--investigate-all)
+                    # Fallback: No triage performed (shouldn't happen with always-triage)
+                    # Analyze all findings directly
                     findings_to_analyze = (
                         findings[:detailed_analysis_limit]
                         if detailed_analysis_limit is not None
@@ -376,10 +384,11 @@ reports/
                         progress_callback=detailed_progress_callback,
                     )
 
-                    # Perform analysis with per-finding progress
+                    # Perform analysis with per-finding progress (with grouping info)
                     detailed_assessments = await self._analyze_findings_with_progress(
                         analysis_agent,
                         findings_to_analyze,
+                        triage_results=triage_results,
                     )
 
                     # Clear thinking display when agent completes
@@ -431,6 +440,7 @@ reports/
         self,
         analysis_agent: DetailedSecurityAnalysisAgent,
         findings: list[Finding],
+        triage_results: list[TriageResult] | None = None,
     ) -> dict[str, Any]:
         """
         Analyze findings one by one with progress updates.
@@ -438,6 +448,7 @@ reports/
         Args:
             analysis_agent: The detailed analysis agent
             findings: List of findings to analyze
+            triage_results: Optional triage results containing grouping information
 
         Returns:
             Dictionary of finding_id to DetailedSecurityAssessment
@@ -446,10 +457,22 @@ reports/
             DetailedSecurityAssessment,
         )
 
+        # Build finding groups dict from triage results
+        finding_groups: dict[str, list[str]] = {}
+        if triage_results:
+            for triage in triage_results:
+                if triage.related_finding_ids:
+                    finding_groups[triage.finding_id] = triage.related_finding_ids
+
         assessments: dict[str, DetailedSecurityAssessment] = {}
         total = len(findings)
 
         for index, finding in enumerate(findings, start=1):
+            # Check if this is a grouped finding
+            related_ids = finding_groups.get(finding.id, [])
+            is_group = len(related_ids) > 0
+            total_instances = 1 + len(related_ids) if is_group else 1
+
             # Emit progress for this specific finding
             self._emit_progress(
                 "detailed_analysis_finding_progress",
@@ -457,10 +480,12 @@ reports/
                 total=total,
                 finding_id=finding.id,
                 severity=finding.severity.value if finding.severity else "unknown",
+                is_group=is_group,
+                total_instances=total_instances,
             )
 
-            # Analyze single finding
-            result = await analysis_agent.execute([finding])
+            # Analyze single finding with group context
+            result = await analysis_agent.execute([finding], finding_groups=finding_groups)
             if result:
                 assessments.update(result)
 
