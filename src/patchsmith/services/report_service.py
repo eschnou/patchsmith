@@ -1,12 +1,16 @@
 """Report service for generating security analysis reports."""
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from patchsmith.adapters.claude.report_generator_agent import ReportGeneratorAgent
 from patchsmith.models.analysis import AnalysisResult, TriageResult
 from patchsmith.models.config import PatchsmithConfig
 from patchsmith.models.finding import DetailedSecurityAssessment
+from patchsmith.presentation.formatters.report_base import BaseReportFormatter
+from patchsmith.presentation.formatters.report_html import ReportHtmlFormatter
+from patchsmith.presentation.formatters.report_markdown import ReportMarkdownFormatter
 from patchsmith.services.base_service import BaseService
 from patchsmith.utils.logging import get_logger
 
@@ -52,7 +56,7 @@ class ReportService(BaseService):
             analysis_result: Analysis results
             triage_results: Optional triage results
             detailed_assessments: Optional detailed assessments
-            report_format: Output format ("markdown", "html", "text")
+            report_format: Output format ("markdown", "html")
             output_path: Optional path to save report
 
         Returns:
@@ -69,7 +73,7 @@ class ReportService(BaseService):
 
         try:
             # Create agent progress callback
-            def agent_progress_callback(current_turn: int, max_turns: int):
+            def agent_progress_callback(current_turn: int, max_turns: int) -> None:
                 self._emit_progress(
                     "agent_turn_progress",
                     current_turn=current_turn,
@@ -77,20 +81,17 @@ class ReportService(BaseService):
                 )
 
             # Initialize report generator agent
-            # Note: AnalysisResult doesn't have project_path, using a temp path
-            from pathlib import Path
             report_agent = ReportGeneratorAgent(
                 working_dir=Path.cwd(),
                 thinking_callback=self.thinking_callback,
                 progress_callback=agent_progress_callback,
             )
 
-            # Generate report
-            report = await report_agent.execute(
+            # Generate structured report data
+            report_data = await report_agent.execute(
                 analysis_result=analysis_result,
                 triage_results=triage_results,
                 detailed_assessments=detailed_assessments,
-                report_format=report_format,
             )
 
             # Clear thinking display when agent completes
@@ -98,18 +99,29 @@ class ReportService(BaseService):
                 self.thinking_callback("")
 
             self._emit_progress(
+                "report_formatting_started",
+                format=report_format,
+            )
+
+            # Select appropriate formatter
+            formatter = self._get_formatter(report_format)
+
+            # Format the report
+            formatted_report = formatter.format(report_data)
+
+            self._emit_progress(
                 "report_generation_completed",
-                report_length=len(report),
+                report_length=len(formatted_report),
             )
 
             # Save to file if path provided
             if output_path:
                 self._emit_progress("report_saving", path=str(output_path))
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(report)
+                output_path.write_text(formatted_report)
                 self._emit_progress("report_saved", path=str(output_path))
 
-            return report
+            return formatted_report
 
         except Exception as e:
             self._emit_progress("report_generation_failed", error=str(e))
@@ -119,3 +131,30 @@ class ReportService(BaseService):
                 error=str(e),
             )
             raise
+
+    def _get_formatter(self, report_format: str) -> BaseReportFormatter:
+        """
+        Get the appropriate formatter for the specified format.
+
+        Args:
+            report_format: Desired format (markdown, html)
+
+        Returns:
+            Formatter instance
+
+        Raises:
+            ValueError: If format is not supported
+        """
+        formatters = {
+            "markdown": ReportMarkdownFormatter(),
+            "html": ReportHtmlFormatter(),
+        }
+
+        formatter = formatters.get(report_format.lower())
+        if formatter is None:
+            raise ValueError(
+                f"Unsupported report format: {report_format}. "
+                f"Supported formats: {', '.join(formatters.keys())}"
+            )
+
+        return formatter

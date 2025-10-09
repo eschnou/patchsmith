@@ -1,10 +1,20 @@
 """Report generator agent for creating security analysis reports."""
 
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Any
+
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, create_sdk_mcp_server, tool
 
 from patchsmith.adapters.claude.agent import AgentError, BaseAgent
 from patchsmith.models.analysis import AnalysisResult, TriageResult
 from patchsmith.models.finding import DetailedSecurityAssessment, Finding, Severity
+from patchsmith.models.report import (
+    ExecutiveSummary,
+    FindingPriority,
+    RecommendationItem,
+    SecurityReportData,
+    StatisticsOverview,
+)
 from patchsmith.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -18,92 +28,209 @@ class ReportGeneratorAgent(BaseAgent):
 
     This agent takes analysis results and generates comprehensive reports
     with executive summaries, prioritized findings, and actionable recommendations.
+    Returns structured data that can be formatted into various output formats.
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize report generator agent with result storage."""
+        super().__init__(*args, **kwargs)
+        self._report_data: dict | None = None
+
+    def _create_submit_tool(self) -> Any:
+        """Create submit_report_data tool with closure to access instance state.
+
+        Returns:
+            Tool function that can access self._report_data
+        """
+        # Capture self in closure
+        agent_instance = self
+
+        @tool(
+            "submit_report_content",
+            "Submit narrative report content (agent-generated text only)",
+            {
+                "overall_assessment": str,  # 2-3 paragraphs on security posture
+                "key_risks": list,  # List of 3-5 key risk areas
+                "immediate_actions": list,  # List of 2-4 immediate actions
+                "recommendations": list,  # List of {title: str, description: str, priority: str, category: str, affected_findings: list[str]}
+            },
+        )
+        async def submit_report_data_tool(args: dict) -> dict:
+            """Tool for submitting narrative report content."""
+            # Handle JSON string input (entire args)
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    logger.error("submit_report_content_invalid_json", data=str(args)[:200])
+                    return {"content": [{"type": "text", "text": "Error: Invalid JSON format"}]}
+
+            # Parse nested JSON strings if needed
+            def parse_list_field(value: Any, field_name: str) -> list:
+                """Parse value as a list, handling JSON strings and various formats.
+
+                Args:
+                    value: Value to parse (could be list, JSON string, or other)
+                    field_name: Name of field for logging
+
+                Returns:
+                    List (empty list if parsing fails)
+                """
+                # Already a list
+                if isinstance(value, list):
+                    return value
+
+                # Try parsing JSON string
+                if isinstance(value, str):
+                    try:
+                        parsed = json.loads(value)
+                        if isinstance(parsed, list):
+                            return parsed
+                        logger.warning(
+                            "report_field_not_list",
+                            field=field_name,
+                            type=type(parsed).__name__,
+                        )
+                        return []
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(
+                            "report_field_parse_failed",
+                            field=field_name,
+                            value_preview=str(value)[:100],
+                        )
+                        return []
+
+                # Fallback to empty list
+                logger.warning(
+                    "report_field_invalid_type",
+                    field=field_name,
+                    type=type(value).__name__,
+                )
+                return []
+
+            # Store only narrative content from agent
+            agent_instance._report_data = {
+                "overall_assessment": args.get("overall_assessment", ""),
+                "key_risks": parse_list_field(args.get("key_risks", []), "key_risks"),
+                "immediate_actions": parse_list_field(
+                    args.get("immediate_actions", []), "immediate_actions"
+                ),
+                "recommendations": parse_list_field(
+                    args.get("recommendations", []), "recommendations"
+                ),
+            }
+
+            recommendations_count = len(agent_instance._report_data["recommendations"])
+
+            logger.info(
+                "report_content_submitted",
+                recommendations_count=recommendations_count,
+            )
+
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Report content recorded: {recommendations_count} recommendations",
+                    }
+                ]
+            }
+
+        return submit_report_data_tool
 
     def get_system_prompt(self) -> str:
         """Get system prompt for report generation."""
-        return """You are a technical security report writer.
+        return """You are a technical security report writer who creates executive summaries and recommendations.
 
 Your expertise includes:
-- Creating clear, actionable security reports
-- Summarizing complex technical findings
-- Prioritizing vulnerabilities by risk
-- Providing remediation guidance
-- Writing for both technical and executive audiences
+- Summarizing complex technical findings for executive audiences
+- Identifying key security risks and priorities
+- Providing actionable remediation recommendations
+- Writing clear, professional security guidance
 
-Report Structure:
-1. Executive Summary (2-3 paragraphs)
-   - Overall security posture
-   - Critical statistics
-   - Key recommendations
+Your role is to provide NARRATIVE CONTENT ONLY:
+1. overall_assessment - 2-3 paragraphs describing the overall security posture
+2. key_risks - List of 3-5 key risk areas or vulnerability types
+3. immediate_actions - List of 2-4 immediate actions needed for critical issues
+4. recommendations - Actionable recommendations with priority and category
 
-2. Findings Overview
-   - Statistics by severity
-   - Most common vulnerability types
-   - Trends and patterns
+You have access to:
+- submit_report_content: Submit your narrative content (YOU MUST call this)
 
-3. Prioritized Findings
-   - Critical and high severity first
-   - Include location, description, impact
-   - Filter out likely false positives
+Process:
+1. Review the provided statistics, findings, and assessments
+2. Write an overall assessment (2-3 paragraphs on security posture)
+3. Identify 3-5 key risk areas
+4. List 2-4 immediate actions for the most critical issues
+5. Generate 5-10 actionable recommendations
+6. Call submit_report_content tool with your narrative content
 
-4. Recommendations
-   - Immediate actions for critical issues
-   - Long-term security improvements
-   - Process and tooling suggestions
+Each recommendation should have:
+- title: Short title
+- description: Detailed description (2-3 sentences)
+- priority: immediate, high, medium, or low
+- category: remediation, process, tooling, or training
+- affected_findings: List of finding IDs this addresses (if applicable)
 
-Write in clear, professional technical language. Be specific and actionable."""
+Be specific, technical, and actionable. Focus on the most critical issues first.
+YOU MUST call the submit_report_content tool to report your content."""
 
     async def execute(  # type: ignore[override]
         self,
         analysis_result: AnalysisResult,
         triage_results: list[TriageResult] | None = None,
         detailed_assessments: dict[str, DetailedSecurityAssessment] | None = None,
-        report_format: str = "markdown",
-    ) -> str:
+    ) -> SecurityReportData:
         """
-        Generate security report from analysis results.
+        Generate structured security report data from analysis results.
 
         Args:
             analysis_result: Analysis results with all findings
             triage_results: Optional triage results (prioritized findings)
             detailed_assessments: Optional detailed assessments (comprehensive analysis)
-            report_format: Format for the report ("markdown", "html", "text")
 
         Returns:
-            Generated report as string
+            Structured SecurityReportData object
 
         Raises:
             AgentError: If report generation fails
         """
+        # Reset instance results
+        self._report_data = None
+
         logger.info(
             "report_generation_started",
             agent=self.agent_name,
             finding_count=len(analysis_result.findings),
             has_triage=triage_results is not None,
             has_detailed=detailed_assessments is not None,
-            format=report_format,
         )
 
         try:
-            # Build generation prompt
-            prompt = self._build_generation_prompt(
-                analysis_result, triage_results, detailed_assessments, report_format
+            # Create MCP server with custom tool
+            submit_tool = self._create_submit_tool()
+            server = create_sdk_mcp_server(
+                name="report-content",
+                version="1.0.0",
+                tools=[submit_tool],
             )
 
-            # Query Claude with turn tracking
-            from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+            # Build generation prompt
+            prompt = self._build_generation_prompt(
+                analysis_result, triage_results, detailed_assessments
+            )
 
+            # Configure options with custom tool
             options = ClaudeAgentOptions(
                 system_prompt=self.get_system_prompt(),
-                max_turns=10,  # Allow some turns for report refinement
-                allowed_tools=[],  # No tools needed
+                max_turns=50,  # Reduced - agent only writes narrative
+                allowed_tools=["mcp__report-content__submit_report_content"],
+                mcp_servers={"report-content": server},
                 cwd=str(self.working_dir),
             )
 
-            response_text = ""
+            # Query Claude with custom client
             turn_count = 0
-
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(prompt)
 
@@ -120,19 +247,48 @@ Write in clear, professional technical language. Be specific and actionable."""
                     if thinking:
                         self._emit_thinking(thinking)
 
-                    # Collect response text
+                    logger.debug(
+                        "agent_received_message",
+                        agent=self.agent_name,
+                        message_type=message_type,
+                    )
+
+                    # Check for tool use
                     if message_type == "AssistantMessage" and hasattr(message, "content"):
                         for item in message.content if isinstance(message.content, list) else []:
-                            if type(item).__name__ == "TextBlock" and hasattr(item, "text"):
-                                response_text += item.text
+                            if hasattr(item, "type") and item.type == "tool_use":
+                                logger.info(
+                                    "tool_use_detected",
+                                    agent=self.agent_name,
+                                    tool_name=getattr(item, "name", "unknown"),
+                                )
+
+                    # Log final result
+                    if message_type == "ResultMessage":
+                        logger.info(
+                            "result_message_received",
+                            agent=self.agent_name,
+                            subtype=getattr(message, "subtype", "unknown"),
+                            num_turns=getattr(message, "num_turns", 0),
+                        )
+
+            # Check if tool was called
+            if self._report_data is None:
+                raise AgentError("Agent did not call submit_report_content tool")
+
+            # Build report from agent narrative + existing data
+            report_data = self._build_report_from_data(
+                self._report_data, analysis_result, triage_results, detailed_assessments
+            )
 
             logger.info(
                 "report_generation_completed",
                 agent=self.agent_name,
-                report_length=len(response_text),
+                findings_count=len(report_data.prioritized_findings),
+                recommendations_count=len(report_data.recommendations),
             )
 
-            return response_text
+            return report_data
 
         except Exception as e:
             logger.error(
@@ -147,7 +303,6 @@ Write in clear, professional technical language. Be specific and actionable."""
         analysis_result: AnalysisResult,
         triage_results: list[TriageResult] | None,
         detailed_assessments: dict[str, DetailedSecurityAssessment] | None,
-        report_format: str,
     ) -> str:
         """
         Build prompt for report generation.
@@ -156,7 +311,6 @@ Write in clear, professional technical language. Be specific and actionable."""
             analysis_result: Full analysis results
             triage_results: Triage results (prioritization)
             detailed_assessments: Detailed security assessments
-            report_format: Desired report format
 
         Returns:
             Generation prompt
@@ -204,29 +358,181 @@ Statistics:
                     detailed_text += f"  Priority: {assessment.remediation_priority.upper()}\n"
                 detailed_text += "\n"
 
-        format_instruction = ""
-        if report_format == "markdown":
-            format_instruction = "\n\nFormat the report in Markdown with proper headings, lists, and code blocks."
-        elif report_format == "html":
-            format_instruction = "\n\nFormat the report in HTML with proper structure and styling."
-
-        return f"""Generate a comprehensive security analysis report.
+        return f"""Write narrative content for a security analysis report.
 
 {stats_text}{triage_text}{detailed_text}
 
 Project analyzed: {analysis_result.project_name}
 Languages: {', '.join(analysis_result.languages_analyzed) if analysis_result.languages_analyzed else 'Unknown'}
-Analyzed at: {analysis_result.timestamp.isoformat()}{format_instruction}
+Analyzed at: {analysis_result.timestamp.isoformat()}
 
-Create a professional security report with:
-1. Executive Summary (highlighting most critical issues)
-2. Overview Statistics
-3. Prioritized Findings (focus on high-priority items from detailed analysis)
-4. Detailed Analysis (for assessed findings, include attack scenarios and remediation priorities)
-5. Recommendations
+Your task is to write:
 
-Use the triage results to show which issues were prioritized and why.
-Use the detailed assessments to provide depth on attack scenarios and impacts."""
+1. overall_assessment (2-3 paragraphs)
+   - Describe the overall security posture based on the findings above
+   - Mention that there are {stats.get_critical_count()} critical and {stats.get_high_count()} high severity findings
+   - Discuss the severity of the issues and their potential impact
+
+2. key_risks (list of 3-5 items)
+   - Identify the main types of vulnerabilities or risk areas
+   - Based on the findings, triage results, and detailed assessments above
+
+3. immediate_actions (list of 2-4 items)
+   - Specify concrete actions needed to address critical issues
+   - Be specific and actionable
+
+4. recommendations (list of 5-10 items, each with: title, description, priority, category, affected_findings)
+   - Generate actionable security recommendations
+   - Cover remediation, process improvements, tooling, and training
+   - Link recommendations to specific finding IDs where applicable
+   - Priority: immediate, high, medium, or low
+   - Category: remediation, process, tooling, or training
+
+Call submit_report_content tool with your narrative content."""
+
+    def _build_report_from_data(
+        self,
+        narrative_content: dict,
+        analysis_result: AnalysisResult,
+        triage_results: list[TriageResult] | None,
+        detailed_assessments: dict[str, DetailedSecurityAssessment] | None,
+    ) -> SecurityReportData:
+        """
+        Build SecurityReportData from existing data + agent narrative.
+
+        Args:
+            narrative_content: Agent-generated narrative content
+            analysis_result: Original analysis result with findings and stats
+            triage_results: Triage results for prioritization
+            detailed_assessments: Detailed assessments for enrichment
+
+        Returns:
+            SecurityReportData object
+
+        Raises:
+            AgentError: If building fails
+        """
+        try:
+            from datetime import datetime
+
+            # Build executive summary from agent narrative + actual counts
+            stats = analysis_result.statistics
+
+            # Ensure list fields are actually lists
+            key_risks = narrative_content.get("key_risks", [])
+            if not isinstance(key_risks, list):
+                logger.warning("key_risks_not_list", type=type(key_risks).__name__)
+                key_risks = []
+
+            immediate_actions = narrative_content.get("immediate_actions", [])
+            if not isinstance(immediate_actions, list):
+                logger.warning("immediate_actions_not_list", type=type(immediate_actions).__name__)
+                immediate_actions = []
+
+            executive_summary = ExecutiveSummary(
+                overall_assessment=narrative_content.get("overall_assessment", ""),
+                critical_findings_count=stats.get_critical_count(),
+                high_findings_count=stats.get_high_count(),
+                key_risks=key_risks,
+                immediate_actions=immediate_actions,
+            )
+
+            # Build statistics directly from analysis_result
+            # Calculate most common CWEs
+            cwe_counts: dict[str, int] = {}
+            for finding in analysis_result.findings:
+                if finding.cwe:
+                    cwe_id = finding.cwe.id
+                    cwe_counts[cwe_id] = cwe_counts.get(cwe_id, 0) + 1
+
+            most_common_cwes = sorted(cwe_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            statistics = StatisticsOverview(
+                total_findings=len(analysis_result.findings),
+                critical_count=stats.get_critical_count(),
+                high_count=stats.get_high_count(),
+                medium_count=stats.by_severity.get(Severity.MEDIUM, 0),
+                low_count=stats.by_severity.get(Severity.LOW, 0),
+                info_count=stats.by_severity.get(Severity.INFO, 0),
+                false_positives_filtered=stats.false_positives_filtered,
+                most_common_cwes=most_common_cwes,
+            )
+
+            # Build prioritized findings from triage + detailed assessments
+            prioritized_findings = []
+            if triage_results:
+                # Use triage results to prioritize
+                for triage in triage_results:
+                    if not triage.recommended_for_analysis:
+                        continue  # Skip low-priority findings
+
+                    # Find the actual finding
+                    finding_match = next(
+                        (f for f in analysis_result.findings if f.id == triage.finding_id),
+                        None
+                    )
+                    if not finding_match:
+                        continue
+
+                    finding = finding_match
+
+                    # Get detailed assessment if available
+                    assessment = detailed_assessments.get(triage.finding_id) if detailed_assessments else None
+
+                    # Build FindingPriority
+                    finding_priority = FindingPriority(
+                        finding_id=finding.id,
+                        title=finding.rule_id,  # Use rule_id as title
+                        severity=finding.severity.value,
+                        location=finding.location,
+                        description=finding.message,
+                        priority_score=triage.priority_score,
+                        reasoning=triage.reasoning,
+                        cwe=finding.cwe.id if finding.cwe else None,
+                        is_false_positive=assessment.is_false_positive if assessment else False,
+                        attack_scenario=assessment.attack_scenario if assessment and not assessment.is_false_positive else None,
+                        risk_type=assessment.risk_type.value if assessment and not assessment.is_false_positive else None,
+                        exploitability_score=assessment.exploitability_score if assessment and not assessment.is_false_positive else None,
+                        impact_description=assessment.impact_description if assessment and not assessment.is_false_positive else None,
+                        remediation_priority=assessment.remediation_priority if assessment and not assessment.is_false_positive else None,
+                    )
+                    prioritized_findings.append(finding_priority)
+
+            # Parse recommendations from agent
+            recommendations = []
+            for rec_data in narrative_content.get("recommendations", []):
+                if not isinstance(rec_data, dict):
+                    continue
+
+                recommendation = RecommendationItem(
+                    title=rec_data.get("title", ""),
+                    description=rec_data.get("description", ""),
+                    priority=rec_data.get("priority", "medium"),
+                    category=rec_data.get("category", "remediation"),
+                    affected_findings=rec_data.get("affected_findings", []),
+                )
+                recommendations.append(recommendation)
+
+            # Create SecurityReportData
+            report_data = SecurityReportData(
+                project_name=analysis_result.project_name,
+                timestamp=datetime.now(),
+                languages_analyzed=analysis_result.languages_analyzed,
+                executive_summary=executive_summary,
+                statistics=statistics,
+                prioritized_findings=prioritized_findings,
+                recommendations=recommendations,
+                has_triage_data=triage_results is not None,
+                has_detailed_assessments=detailed_assessments is not None,
+                triage_count=len(triage_results) if triage_results else 0,
+                detailed_assessment_count=len(detailed_assessments) if detailed_assessments else 0,
+            )
+
+            return report_data
+
+        except Exception as e:
+            logger.error("report_build_error", error=str(e))
+            raise AgentError(f"Failed to build report: {e}") from e
 
     def _format_finding(self, finding: Finding, index: int) -> str:
         """

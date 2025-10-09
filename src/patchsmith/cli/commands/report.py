@@ -25,7 +25,7 @@ from patchsmith.services.report_service import ReportService
 @click.option(
     "--format",
     "-f",
-    type=click.Choice(["markdown", "html", "text"], case_sensitive=False),
+    type=click.Choice(["markdown", "html"], case_sensitive=False),
     default="markdown",
     help="Report format"
 )
@@ -71,7 +71,7 @@ def report(
     if path is None:
         path = Path.cwd()
 
-    console.print(f"\n[bold cyan]📄 Patchsmith Security Report[/bold cyan]")
+    console.print("\n[bold cyan]📄 Patchsmith Security Report[/bold cyan]")
     console.print(f"Project: [yellow]{path}[/yellow]")
     console.print(f"Format: [yellow]{format}[/yellow]\n")
 
@@ -104,7 +104,7 @@ async def _generate_report(
         if output_path is None:
             report_dir = path.parent / ".patchsmith_reports"
             report_dir.mkdir(exist_ok=True)
-            extension = {"markdown": "md", "html": "html", "text": "txt"}[report_format]
+            extension = {"markdown": "md", "html": "html"}[report_format]
             output_path = report_dir / f"{path.name}_security_report.{extension}"
 
         # Get or generate analysis data
@@ -152,22 +152,52 @@ async def _generate_report(
                     id=f_data["id"],
                     rule_id=f_data["rule_id"],
                     severity=Severity(f_data["severity"]),
-                    cwe=CWE(id=f_data["cwe"]["id"]) if f_data.get("cwe") else None,
+                    cwe=CWE(id=f_data["cwe"]["id"], name=f_data["cwe"].get("name")) if f_data.get("cwe") else None,
                     file_path=Path(f_data["file_path"]),
                     start_line=f_data["start_line"],
                     end_line=f_data.get("end_line", f_data["start_line"]),
                     message=f_data["message"],
                     snippet=f_data.get("snippet"),
+                    false_positive_score=None,  # Not stored in cached results
                 )
                 findings.append(finding)
 
-            # Reconstruct statistics
-            stats_data = data.get("statistics", {})
+            # Compute statistics from findings
+            # The cached statistics are incomplete, so we compute them from the findings
+            by_severity: dict[Severity, int] = {}
+            by_cwe: dict[str, int] = {}
+            by_language: dict[str, int] = {}
+
+            for finding in findings:
+                # Count by severity
+                by_severity[finding.severity] = by_severity.get(finding.severity, 0) + 1
+
+                # Count by CWE
+                if finding.cwe:
+                    by_cwe[finding.cwe.id] = by_cwe.get(finding.cwe.id, 0) + 1
+
+                # Count by language (infer from file extension)
+                file_path_str = str(finding.file_path)
+                if file_path_str.endswith(('.ts', '.tsx', '.js', '.jsx')):
+                    lang = 'javascript'
+                elif file_path_str.endswith('.py'):
+                    lang = 'python'
+                elif file_path_str.endswith(('.c', '.cpp', '.h', '.hpp')):
+                    lang = 'cpp'
+                elif file_path_str.endswith('.go'):
+                    lang = 'go'
+                elif file_path_str.endswith('.java'):
+                    lang = 'java'
+                else:
+                    lang = 'other'
+                by_language[lang] = by_language.get(lang, 0) + 1
+
             statistics = AnalysisStatistics(
-                total_findings=data.get("total_findings", len(findings)),
-                by_severity={},
-                by_cwe={},
-                by_language={},
+                total_findings=len(findings),
+                by_severity=by_severity,
+                by_cwe=by_cwe,
+                by_language=by_language,
+                false_positives_filtered=0,  # Not tracked in cached results
             )
 
             # Reconstruct triage results

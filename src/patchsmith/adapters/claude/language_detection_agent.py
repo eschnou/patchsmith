@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, create_sdk_mcp_server, tool
 
@@ -12,55 +13,68 @@ from patchsmith.utils.logging import get_logger
 logger = get_logger()
 
 
-# Storage for tool results (will be populated by tool calls)
-_language_detection_results: list[dict] | None = None
-
-
-@tool(
-    "submit_languages",
-    "Submit detected programming languages with confidence scores",
-    {
-        "languages": list,  # List of {name: str, confidence: float, evidence: list[str]}
-    },
-)
-async def submit_languages_tool(args: dict) -> dict:
-    """Tool for submitting language detection results."""
-    global _language_detection_results
-
-    languages_data = args.get("languages", [])
-
-    # Handle case where languages might be a JSON string
-    if isinstance(languages_data, str):
-        try:
-            languages_data = json.loads(languages_data)
-        except json.JSONDecodeError:
-            logger.error("submit_languages_tool_invalid_json", data=languages_data[:200])
-            languages_data = []
-
-    _language_detection_results = languages_data
-
-    logger.info(
-        "languages_submitted",
-        count=len(_language_detection_results),
-        languages=[lang.get("name") if isinstance(lang, dict) else str(lang) for lang in _language_detection_results[:5]],
-    )
-
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": f"Successfully recorded {len(_language_detection_results)} language(s)",
-            }
-        ]
-    }
-
-
 class LanguageDetectionAgent(BaseAgent):
     """Agent for detecting programming languages in a codebase using Claude AI.
 
     This agent analyzes file structures and contents to identify programming
     languages used in a project, providing confidence scores for each detection.
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize language detection agent with result storage."""
+        super().__init__(*args, **kwargs)
+        self._detection_results: list[dict] | None = None
+
+    def _create_submit_tool(self) -> Any:
+        """Create submit_languages tool with closure to access instance state.
+
+        Returns:
+            Tool function that can access self._detection_results
+        """
+        # Capture self in closure
+        agent_instance = self
+
+        @tool(
+            "submit_languages",
+            "Submit detected programming languages with confidence scores",
+            {
+                "languages": list,  # List of {name: str, confidence: float, evidence: list[str]}
+            },
+        )
+        async def submit_languages_tool(args: dict) -> dict:
+            """Tool for submitting language detection results."""
+            languages_data = args.get("languages", [])
+
+            # Handle case where languages might be a JSON string
+            if isinstance(languages_data, str):
+                try:
+                    languages_data = json.loads(languages_data)
+                except json.JSONDecodeError:
+                    logger.error("submit_languages_tool_invalid_json", data=languages_data[:200])
+                    languages_data = []
+
+            # Store in instance variable instead of global
+            agent_instance._detection_results = languages_data
+
+            logger.info(
+                "languages_submitted",
+                count=len(languages_data),
+                languages=[
+                    lang.get("name") if isinstance(lang, dict) else str(lang)
+                    for lang in languages_data[:5]
+                ],
+            )
+
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Successfully recorded {len(languages_data)} language(s)",
+                    }
+                ]
+            }
+
+        return submit_languages_tool
 
     def get_system_prompt(self) -> str:
         """Get system prompt for language detection."""
@@ -117,8 +131,8 @@ YOU MUST call the submit_languages tool to report your findings."""
         Raises:
             AgentError: If detection fails
         """
-        global _language_detection_results
-        _language_detection_results = None  # Reset
+        # Reset instance results
+        self._detection_results = None
 
         target_path = project_path or self.working_dir
 
@@ -136,11 +150,12 @@ YOU MUST call the submit_languages tool to report your findings."""
             raise AgentError(f"Project path is not a directory: {target_path}")
 
         try:
-            # Create MCP server with custom tool
+            # Create MCP server with custom tool (using instance method)
+            submit_tool = self._create_submit_tool()
             server = create_sdk_mcp_server(
                 name="language-detection",
                 version="1.0.0",
-                tools=[submit_languages_tool],
+                tools=[submit_tool],
             )
 
             # Build analysis prompt
@@ -208,7 +223,11 @@ YOU MUST call the submit_languages tool to report your findings."""
                                         agent=self.agent_name,
                                         message_type=message_type,
                                         item_index=idx,
-                                        text=item.text[:300] if hasattr(item.text, "__len__") else str(item.text)[:300],
+                                        text=(
+                                            item.text[:300]
+                                            if hasattr(item.text, "__len__")
+                                            else str(item.text)[:300]
+                                        ),
                                     )
                                 if hasattr(item, "type"):
                                     logger.debug(
@@ -241,11 +260,13 @@ YOU MUST call the submit_languages tool to report your findings."""
                         )
 
             # Check if tool was called
-            if _language_detection_results is None:
-                raise AgentError("Agent did not call submit_languages tool - check max_turns or prompt")
+            if self._detection_results is None:
+                raise AgentError(
+                    "Agent did not call submit_languages tool - check max_turns or prompt"
+                )
 
             # Convert to LanguageDetection objects
-            languages = self._parse_tool_results(_language_detection_results)
+            languages = self._parse_tool_results(self._detection_results)
 
             logger.info(
                 "language_detection_completed",

@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, create_sdk_mcp_server, tool
 
@@ -17,54 +17,6 @@ if TYPE_CHECKING:
 logger = get_logger()
 
 
-# Storage for tool results
-_triage_results: list[dict] | None = None
-
-
-@tool(
-    "submit_triage_results",
-    "Submit prioritized findings after triage analysis",
-    {
-        "prioritized_findings": list,  # List of {finding_id: str, priority_score: float, reasoning: str, recommended_for_analysis: bool}
-    },
-)
-async def submit_triage_results_tool(args: dict) -> dict:
-    """Tool for submitting triage results."""
-    global _triage_results
-
-    # Handle JSON string input
-    prioritized = args.get("prioritized_findings", [])
-    if isinstance(prioritized, str):
-        try:
-            prioritized = json.loads(prioritized)
-        except json.JSONDecodeError:
-            logger.error("submit_triage_invalid_json", data=str(prioritized)[:200])
-            return {
-                "content": [
-                    {"type": "text", "text": "Error: Invalid JSON format"}
-                ]
-            }
-
-    _triage_results = prioritized
-
-    recommended_count = sum(1 for item in prioritized if item.get("recommended_for_analysis", False))
-
-    logger.info(
-        "triage_results_submitted",
-        total_prioritized=len(prioritized),
-        recommended_for_analysis=recommended_count,
-    )
-
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": f"Triage complete: {len(prioritized)} findings prioritized, {recommended_count} recommended for detailed analysis",
-            }
-        ]
-    }
-
-
 class TriageAgent(BaseAgent):
     """Agent for triaging and prioritizing security findings.
 
@@ -72,6 +24,62 @@ class TriageAgent(BaseAgent):
     critical issues that warrant detailed investigation. It considers severity,
     vulnerability type, context, and potential impact to create a prioritized list.
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize triage agent with result storage."""
+        super().__init__(*args, **kwargs)
+        self._triage_results: list[dict] | None = None
+
+    def _create_submit_tool(self) -> Any:
+        """Create submit_triage_results tool with closure to access instance state.
+
+        Returns:
+            Tool function that can access self._triage_results
+        """
+        # Capture self in closure
+        agent_instance = self
+
+        @tool(
+            "submit_triage_results",
+            "Submit prioritized findings after triage analysis",
+            {
+                "prioritized_findings": list,  # List of {finding_id: str, priority_score: float, reasoning: str, recommended_for_analysis: bool}
+            },
+        )
+        async def submit_triage_results_tool(args: dict) -> dict:
+            """Tool for submitting triage results."""
+            # Handle JSON string input
+            prioritized = args.get("prioritized_findings", [])
+            if isinstance(prioritized, str):
+                try:
+                    prioritized = json.loads(prioritized)
+                except json.JSONDecodeError:
+                    logger.error("submit_triage_invalid_json", data=str(prioritized)[:200])
+                    return {"content": [{"type": "text", "text": "Error: Invalid JSON format"}]}
+
+            # Store in instance variable instead of global
+            agent_instance._triage_results = prioritized
+
+            recommended_count = sum(
+                1 for item in prioritized if item.get("recommended_for_analysis", False)
+            )
+
+            logger.info(
+                "triage_results_submitted",
+                total_prioritized=len(prioritized),
+                recommended_for_analysis=recommended_count,
+            )
+
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Triage complete: {len(prioritized)} findings prioritized, {recommended_count} recommended for detailed analysis",
+                    }
+                ]
+            }
+
+        return submit_triage_results_tool
 
     def get_system_prompt(self) -> str:
         """Get system prompt for triage."""
@@ -121,7 +129,7 @@ Requirements:
 - reasoning: brief explanation (1-2 sentences)
 - recommended_for_analysis: true for top findings, false for lower priority
 
-Select 10-20 findings for detailed analysis. Focus on:
+Select up to ten findings for detailed analysis. Focus on:
 - Highest severity with clear exploitation paths
 - Vulnerabilities in critical code paths
 - Issues with significant potential impact
@@ -133,7 +141,7 @@ YOU MUST call the submit_triage_results tool to report your prioritization."""
         self,
         findings: list[Finding],
         csv_path: Path | None = None,
-        top_n: int = 20,
+        top_n: int = 10,
     ) -> list[TriageResult]:
         """
         Triage findings and return prioritized list.
@@ -149,8 +157,8 @@ YOU MUST call the submit_triage_results tool to report your prioritization."""
         Raises:
             AgentError: If triage fails
         """
-        global _triage_results
-        _triage_results = None  # Reset
+        # Reset instance results
+        self._triage_results = None
 
         logger.info(
             "triage_started",
@@ -160,11 +168,12 @@ YOU MUST call the submit_triage_results tool to report your prioritization."""
         )
 
         try:
-            # Create MCP server with custom tool
+            # Create MCP server with custom tool (using instance method)
+            submit_tool = self._create_submit_tool()
             server = create_sdk_mcp_server(
                 name="triage",
                 version="1.0.0",
-                tools=[submit_triage_results_tool],
+                tools=[submit_tool],
             )
 
             # Build triage prompt
@@ -223,11 +232,11 @@ YOU MUST call the submit_triage_results tool to report your prioritization."""
                         )
 
             # Check if tool was called
-            if _triage_results is None:
+            if self._triage_results is None:
                 raise AgentError("Agent did not call submit_triage_results tool")
 
             # Convert to TriageResult objects
-            triage_results = self._parse_triage_results(_triage_results)
+            triage_results = self._parse_triage_results(self._triage_results)
 
             # Sort by priority score (highest first)
             triage_results.sort(key=lambda x: x.priority_score, reverse=True)
@@ -266,13 +275,15 @@ YOU MUST call the submit_triage_results tool to report your prioritization."""
         # Summarize findings for the prompt (don't include all details)
         findings_summary = []
         for finding in findings[:100]:  # Limit to first 100 for prompt size
-            findings_summary.append({
-                "id": finding.id,
-                "rule_id": finding.rule_id,
-                "severity": finding.severity.value,
-                "location": finding.location,
-                "message": finding.message[:100],  # Truncate long messages
-            })
+            findings_summary.append(
+                {
+                    "id": finding.id,
+                    "rule_id": finding.rule_id,
+                    "severity": finding.severity.value,
+                    "location": finding.location,
+                    "message": finding.message[:500],  # Truncate long messages
+                }
+            )
 
         findings_text = json.dumps(findings_summary, indent=2)
 
@@ -293,7 +304,7 @@ Findings to analyze:
 Steps:
 1. Analyze the findings by severity, type, and context
 2. Identify patterns and critical vulnerabilities
-3. Select top {top_n} findings for detailed analysis
+3. Select up to {top_n} findings for detailed analysis
 4. For each, assign a priority score (0.0-1.0) and provide reasoning
 5. Call submit_triage_results tool with your prioritized list
 
