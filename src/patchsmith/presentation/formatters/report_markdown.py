@@ -155,58 +155,144 @@ class ReportMarkdownFormatter(BaseReportFormatter):
             lines.append("*No findings to report.*")
             return "\n".join(lines)
 
-        # Group by severity for better organization
-        critical_findings = [
-            f for f in report_data.prioritized_findings if f.severity.lower() == "critical"
+        # Add priority summary table
+        priority_counts = self._count_by_priority(report_data.prioritized_findings)
+        if priority_counts:
+            lines.append("### 📊 Priority Overview")
+            lines.append("")
+            lines.append("| Priority | Count | Action Timeline |")
+            lines.append("|----------|-------|----------------|")
+            if priority_counts.get("immediate", 0) > 0:
+                lines.append(f"| 🚨 **Immediate** | **{priority_counts['immediate']}** | Fix now (today) |")
+            if priority_counts.get("high", 0) > 0:
+                lines.append(f"| ⚠️ High | {priority_counts['high']} | Fix this week |")
+            if priority_counts.get("medium", 0) > 0:
+                lines.append(f"| 📌 Medium | {priority_counts['medium']} | Fix this month |")
+            if priority_counts.get("low", 0) > 0:
+                lines.append(f"| 📝 Low | {priority_counts['low']} | Fix when possible |")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        # Group by remediation priority (not severity!)
+        immediate_findings = [
+            f for f in report_data.prioritized_findings
+            if f.remediation_priority and f.remediation_priority.lower() == "immediate"
         ]
         high_findings = [
-            f for f in report_data.prioritized_findings if f.severity.lower() == "high"
+            f for f in report_data.prioritized_findings
+            if f.remediation_priority and f.remediation_priority.lower() == "high"
         ]
-        other_findings = [
-            f
-            for f in report_data.prioritized_findings
-            if f.severity.lower() not in ["critical", "high"]
+        medium_findings = [
+            f for f in report_data.prioritized_findings
+            if f.remediation_priority and f.remediation_priority.lower() == "medium"
         ]
+        low_findings = [
+            f for f in report_data.prioritized_findings
+            if f.remediation_priority and f.remediation_priority.lower() == "low"
+        ]
+        # Handle findings without remediation priority (sort by priority score)
+        no_priority_findings = [
+            f for f in report_data.prioritized_findings
+            if not f.remediation_priority
+        ]
+        no_priority_findings.sort(key=lambda x: x.priority_score, reverse=True)
 
-        # Critical findings
-        if critical_findings:
-            lines.append("### 🔴 Critical Severity")
+        # Immediate findings
+        if immediate_findings:
+            lines.append("### 🚨 Immediate Action Required")
             lines.append("")
-            for finding in critical_findings:
+            lines.append(f"**{len(immediate_findings)} finding(s) require immediate attention - fix today!**")
+            lines.append("")
+            for finding in immediate_findings:
                 lines.extend(self._format_finding(finding))
             lines.append("")
 
-        # High findings
+        # High priority findings
         if high_findings:
-            lines.append("### 🟠 High Severity")
+            lines.append("### ⚠️ High Priority")
+            lines.append("")
+            lines.append(f"**{len(high_findings)} finding(s) should be fixed this week**")
             lines.append("")
             for finding in high_findings:
                 lines.extend(self._format_finding(finding))
             lines.append("")
 
-        # Other findings
-        if other_findings:
-            lines.append("### 📌 Medium/Low Priority")
+        # Medium priority findings
+        if medium_findings:
+            lines.append("### 📌 Medium Priority")
             lines.append("")
-            for finding in other_findings:
+            lines.append(f"**{len(medium_findings)} finding(s) should be addressed this month**")
+            lines.append("")
+            for finding in medium_findings:
+                lines.extend(self._format_finding(finding))
+            lines.append("")
+
+        # Low priority findings
+        if low_findings:
+            lines.append("### 📝 Low Priority")
+            lines.append("")
+            lines.append(f"**{len(low_findings)} finding(s) - fix when convenient**")
+            lines.append("")
+            for finding in low_findings:
+                lines.extend(self._format_finding(finding))
+            lines.append("")
+
+        # Findings without remediation priority (shouldn't happen but handle gracefully)
+        if no_priority_findings:
+            lines.append("### 📋 Other Findings")
+            lines.append("")
+            for finding in no_priority_findings:
                 lines.extend(self._format_finding(finding))
             lines.append("")
 
         return "\n".join(lines)
 
+    def _count_by_priority(self, findings: list[FindingPriority]) -> dict[str, int]:
+        """Count findings by remediation priority.
+
+        Args:
+            findings: List of findings to count
+
+        Returns:
+            Dictionary mapping priority to count
+        """
+        counts: dict[str, int] = {}
+        for finding in findings:
+            if finding.remediation_priority:
+                priority = finding.remediation_priority.lower()
+                counts[priority] = counts.get(priority, 0) + 1
+        return counts
+
     def _format_finding(self, finding: FindingPriority) -> list[str]:
         """Format a single finding."""
+        # Create severity badge
+        severity_emoji = self._get_severity_emoji(finding.severity)
+        severity_badge = f"{severity_emoji} {finding.severity.upper()}"
+
+        # Create priority indicator
+        priority_pct = int(finding.priority_score * 100)
+        priority_bar = "█" * (priority_pct // 10) + "░" * (10 - priority_pct // 10)
+
         lines = [
             f"#### {finding.title}",
             "",
-            f"**Finding ID:** `{finding.finding_id}`  ",
-            f"**Severity:** {self._get_severity_emoji(finding.severity)} {finding.severity.upper()}  ",
-            f"**Location:** `{finding.location}`  ",
-            f"**Priority Score:** {finding.priority_score:.2f}  ",
+            f"**Finding ID:** `{finding.finding_id}` | **Severity:** {severity_badge}",
+            "",
+            f"**📍 Location:** `{finding.location}`  ",
         ]
 
         if finding.cwe:
-            lines.append(f"**CWE:** {finding.cwe}  ")
+            lines.append(f"**🔖 CWE:** {finding.cwe}  ")
+
+        # Show priority score with visual indicator
+        lines.append(f"**⚡ Priority Score:** {finding.priority_score:.2f} `{priority_bar}` ({priority_pct}%)  ")
+
+        if finding.remediation_priority:
+            priority_emoji = self._get_priority_emoji(finding.remediation_priority)
+            lines.append(f"**🎯 Remediation Priority:** {priority_emoji} {finding.remediation_priority.upper()}  ")
+
+        lines.append("")
 
         if finding.is_false_positive:
             lines.append("")
@@ -246,13 +332,6 @@ class ReportMarkdownFormatter(BaseReportFormatter):
             exploit_level = "High" if finding.exploitability_score >= 0.7 else "Medium" if finding.exploitability_score >= 0.4 else "Low"
             lines.append(
                 f"**Exploitability:** {finding.exploitability_score:.0%} ({exploit_level})"
-            )
-            lines.append("")
-
-        if finding.remediation_priority and not finding.is_false_positive:
-            priority_emoji = self._get_priority_emoji(finding.remediation_priority)
-            lines.append(
-                f"**Remediation Priority:** {priority_emoji} {finding.remediation_priority.upper()}"
             )
             lines.append("")
 

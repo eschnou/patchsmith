@@ -516,46 +516,161 @@ class ReportHtmlFormatter(BaseReportFormatter):
             lines.append("<p><em>No findings to report.</em></p>")
             return "\n".join(lines)
 
-        # Group by severity
-        critical_findings = [f for f in report_data.prioritized_findings if f.severity.lower() == "critical"]
-        high_findings = [f for f in report_data.prioritized_findings if f.severity.lower() == "high"]
-        other_findings = [f for f in report_data.prioritized_findings if f.severity.lower() not in ["critical", "high"]]
+        # Add priority summary table
+        priority_counts = self._count_by_priority(report_data.prioritized_findings)
+        if priority_counts:
+            lines.append("<h3>📊 Priority Overview</h3>")
+            lines.append('<table style="width: 100%; border-collapse: collapse; margin: 20px 0;">')
+            lines.append('  <thead>')
+            lines.append('    <tr style="background: #ecf0f1;">')
+            lines.append('      <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Priority</th>')
+            lines.append('      <th style="padding: 12px; text-align: center; border: 1px solid #ddd;">Count</th>')
+            lines.append('      <th style="padding: 12px; text-align: left; border: 1px solid #ddd;">Action Timeline</th>')
+            lines.append('    </tr>')
+            lines.append('  </thead>')
+            lines.append('  <tbody>')
+            if priority_counts.get("immediate", 0) > 0:
+                lines.append('    <tr style="background: #fee; font-weight: bold;">')
+                lines.append('      <td style="padding: 12px; border: 1px solid #ddd;">🚨 <strong>Immediate</strong></td>')
+                lines.append(f'      <td style="padding: 12px; text-align: center; border: 1px solid #ddd;"><strong>{priority_counts["immediate"]}</strong></td>')
+                lines.append('      <td style="padding: 12px; border: 1px solid #ddd;">Fix now (today)</td>')
+                lines.append('    </tr>')
+            if priority_counts.get("high", 0) > 0:
+                lines.append('    <tr>')
+                lines.append('      <td style="padding: 12px; border: 1px solid #ddd;">⚠️ High</td>')
+                lines.append(f'      <td style="padding: 12px; text-align: center; border: 1px solid #ddd;">{priority_counts["high"]}</td>')
+                lines.append('      <td style="padding: 12px; border: 1px solid #ddd;">Fix this week</td>')
+                lines.append('    </tr>')
+            if priority_counts.get("medium", 0) > 0:
+                lines.append('    <tr>')
+                lines.append('      <td style="padding: 12px; border: 1px solid #ddd;">📌 Medium</td>')
+                lines.append(f'      <td style="padding: 12px; text-align: center; border: 1px solid #ddd;">{priority_counts["medium"]}</td>')
+                lines.append('      <td style="padding: 12px; border: 1px solid #ddd;">Fix this month</td>')
+                lines.append('    </tr>')
+            if priority_counts.get("low", 0) > 0:
+                lines.append('    <tr>')
+                lines.append('      <td style="padding: 12px; border: 1px solid #ddd;">📝 Low</td>')
+                lines.append(f'      <td style="padding: 12px; text-align: center; border: 1px solid #ddd;">{priority_counts["low"]}</td>')
+                lines.append('      <td style="padding: 12px; border: 1px solid #ddd;">Fix when possible</td>')
+                lines.append('    </tr>')
+            lines.append('  </tbody>')
+            lines.append('</table>')
+            lines.append('<hr>')
 
-        # Critical findings
-        if critical_findings:
-            lines.append("<h3>🔴 Critical Severity</h3>")
-            for finding in critical_findings:
-                lines.append(self._format_finding(finding, "critical"))
+        # Group by remediation priority (not severity!)
+        immediate_findings = [
+            f for f in report_data.prioritized_findings
+            if f.remediation_priority and f.remediation_priority.lower() == "immediate"
+        ]
+        high_findings = [
+            f for f in report_data.prioritized_findings
+            if f.remediation_priority and f.remediation_priority.lower() == "high"
+        ]
+        medium_findings = [
+            f for f in report_data.prioritized_findings
+            if f.remediation_priority and f.remediation_priority.lower() == "medium"
+        ]
+        low_findings = [
+            f for f in report_data.prioritized_findings
+            if f.remediation_priority and f.remediation_priority.lower() == "low"
+        ]
+        # Handle findings without remediation priority
+        no_priority_findings = [
+            f for f in report_data.prioritized_findings
+            if not f.remediation_priority
+        ]
+        no_priority_findings.sort(key=lambda x: x.priority_score, reverse=True)
 
-        # High findings
+        # Immediate findings
+        if immediate_findings:
+            lines.append('<h3 style="color: #c0392b;">🚨 Immediate Action Required</h3>')
+            lines.append(f'<p style="background: #fee; padding: 12px; border-left: 4px solid #c0392b; margin: 10px 0;"><strong>{len(immediate_findings)} finding(s) require immediate attention - fix today!</strong></p>')
+            for finding in immediate_findings:
+                lines.append(self._format_finding(finding))
+
+        # High priority
         if high_findings:
-            lines.append("<h3>🟠 High Severity</h3>")
+            lines.append('<h3 style="color: #e67e22;">⚠️ High Priority</h3>')
+            lines.append(f'<p style="background: #fef5e7; padding: 12px; border-left: 4px solid #e67e22; margin: 10px 0;"><strong>{len(high_findings)} finding(s) should be fixed this week</strong></p>')
             for finding in high_findings:
-                lines.append(self._format_finding(finding, "high"))
+                lines.append(self._format_finding(finding))
+
+        # Medium priority
+        if medium_findings:
+            lines.append('<h3 style="color: #3498db;">📌 Medium Priority</h3>')
+            lines.append(f'<p style="background: #ebf5fb; padding: 12px; border-left: 4px solid #3498db; margin: 10px 0;"><strong>{len(medium_findings)} finding(s) should be addressed this month</strong></p>')
+            for finding in medium_findings:
+                lines.append(self._format_finding(finding))
+
+        # Low priority
+        if low_findings:
+            lines.append('<h3 style="color: #95a5a6;">📝 Low Priority</h3>')
+            lines.append(f'<p style="background: #f8f9f9; padding: 12px; border-left: 4px solid #95a5a6; margin: 10px 0;"><strong>{len(low_findings)} finding(s) - fix when convenient</strong></p>')
+            for finding in low_findings:
+                lines.append(self._format_finding(finding))
 
         # Other findings
-        if other_findings:
-            lines.append("<h3>📌 Medium/Low Priority</h3>")
-            for finding in other_findings:
-                severity_class = finding.severity.lower()
-                lines.append(self._format_finding(finding, severity_class))
+        if no_priority_findings:
+            lines.append("<h3>📋 Other Findings</h3>")
+            for finding in no_priority_findings:
+                lines.append(self._format_finding(finding))
 
         return "\n".join(lines)
 
-    def _format_finding(self, finding: FindingPriority, severity_class: str) -> str:
+    def _count_by_priority(self, findings: list[FindingPriority]) -> dict[str, int]:
+        """Count findings by remediation priority.
+
+        Args:
+            findings: List of findings to count
+
+        Returns:
+            Dictionary mapping priority to count
+        """
+        counts: dict[str, int] = {}
+        for finding in findings:
+            if finding.remediation_priority:
+                priority = finding.remediation_priority.lower()
+                counts[priority] = counts.get(priority, 0) + 1
+        return counts
+
+    def _format_finding(self, finding: FindingPriority) -> str:
         """Format a single finding as HTML."""
+        # Determine border color based on remediation priority (not severity)
+        priority_colors = {
+            "immediate": "#c0392b",
+            "high": "#e67e22",
+            "medium": "#3498db",
+            "low": "#95a5a6"
+        }
+        border_color = priority_colors.get(
+            finding.remediation_priority.lower() if finding.remediation_priority else "medium",
+            "#95a5a6"
+        )
+
+        # Create priority bar visualization
+        priority_pct = int(finding.priority_score * 100)
+        priority_bar_filled = "█" * (priority_pct // 10)
+        priority_bar_empty = "░" * (10 - priority_pct // 10)
+        priority_bar = f"{priority_bar_filled}{priority_bar_empty}"
+
         lines = [
-            f'<div class="finding-card {severity_class}">',
+            f'<div class="finding-card" style="border-left-color: {border_color};">',
             f"    <h4>{html_module.escape(finding.title)}</h4>",
             '    <div class="finding-meta">',
-            f'        <p><strong>Finding ID:</strong> <span class="code">{html_module.escape(finding.finding_id)}</span></p>',
-            f'        <p><strong>Severity:</strong> <span class="badge severity-{finding.severity.lower()}">{self._get_severity_emoji(finding.severity)} {finding.severity.upper()}</span></p>',
-            f'        <p><strong>Location:</strong> <span class="code">{html_module.escape(finding.location)}</span></p>',
-            f'        <p><strong>Priority Score:</strong> {finding.priority_score:.2f}</p>',
+            f'        <p><strong>Finding ID:</strong> <span class="code">{html_module.escape(finding.finding_id)}</span> | ',
+            f'        <strong>Severity:</strong> <span class="badge severity-{finding.severity.lower()}">{self._get_severity_emoji(finding.severity)} {finding.severity.upper()}</span></p>',
+            f'        <p><strong>📍 Location:</strong> <span class="code">{html_module.escape(finding.location)}</span></p>',
         ]
 
         if finding.cwe:
-            lines.append(f'        <p><strong>CWE:</strong> {html_module.escape(finding.cwe)}</p>')
+            lines.append(f'        <p><strong>🔖 CWE:</strong> {html_module.escape(finding.cwe)}</p>')
+
+        # Priority score with visual bar
+        lines.append(f'        <p><strong>⚡ Priority Score:</strong> {finding.priority_score:.2f} <code style="background: #2c3e50; color: #ecf0f1; padding: 2px 6px;">{priority_bar}</code> ({priority_pct}%)</p>')
+
+        if finding.remediation_priority:
+            priority_class = f"priority-{finding.remediation_priority.lower()}"
+            lines.append(f'        <p><strong>🎯 Remediation Priority:</strong> <span class="badge {priority_class}">{self._get_priority_emoji(finding.remediation_priority)} {finding.remediation_priority.upper()}</span></p>')
 
         lines.append("    </div>")
 
@@ -581,10 +696,6 @@ class ReportHtmlFormatter(BaseReportFormatter):
         if finding.exploitability_score is not None and not finding.is_false_positive:
             exploit_level = "High" if finding.exploitability_score >= 0.7 else "Medium" if finding.exploitability_score >= 0.4 else "Low"
             lines.append(f"    <p><strong>Exploitability:</strong> {finding.exploitability_score:.0%} ({exploit_level})</p>")
-
-        if finding.remediation_priority and not finding.is_false_positive:
-            priority_class = f"priority-{finding.remediation_priority.lower()}"
-            lines.append(f'    <p><strong>Remediation Priority:</strong> <span class="badge {priority_class}">{self._get_priority_emoji(finding.remediation_priority)} {finding.remediation_priority.upper()}</span></p>')
 
         lines.append("</div>")
 
