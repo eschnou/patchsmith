@@ -40,7 +40,12 @@ from patchsmith.presentation.formatters import BaseFormatter, CVEFormatter, Mark
     type=click.Path(path_type=Path),
     help="Save output to file instead of console",
 )
-def investigate(finding_id: str, path: Path | None, format: str, output: Path | None) -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Force re-investigation even if cached",
+)
+def investigate(finding_id: str, path: Path | None, format: str, output: Path | None, force: bool) -> None:
     """Perform detailed security analysis on a specific finding.
 
     \b
@@ -53,10 +58,13 @@ def investigate(finding_id: str, path: Path | None, format: str, output: Path | 
       • Remediation prioritization
 
     \b
+    Uses cached investigation if available. Change output format without re-analyzing.
+
+    \b
     Examples:
-        patchsmith investigate F-1
-        patchsmith investigate F-5 --path /path/to/project
-        patchsmith investigate F-1 --format cve --output report.txt
+        patchsmith investigate F-1                 # Use cache if available
+        patchsmith investigate F-1 --force         # Force re-investigation
+        patchsmith investigate F-1 -f cve          # Switch format (uses cache)
         patchsmith investigate F-1 -f markdown -o finding.md
     """
     # Use current directory if no path provided
@@ -67,7 +75,7 @@ def investigate(finding_id: str, path: Path | None, format: str, output: Path | 
 
     try:
         # Run async investigation
-        asyncio.run(_run_investigation(finding_id, path, format, output))
+        asyncio.run(_run_investigation(finding_id, path, format, output, force))
     except KeyboardInterrupt:
         console.print("\n[yellow]Investigation interrupted by user[/yellow]")
     except Exception as e:
@@ -76,7 +84,7 @@ def investigate(finding_id: str, path: Path | None, format: str, output: Path | 
 
 
 async def _run_investigation(
-    finding_id: str, project_path: Path, format: str, output: Path | None
+    finding_id: str, project_path: Path, format: str, output: Path | None, force: bool
 ) -> None:
     """Run the investigation workflow.
 
@@ -85,6 +93,7 @@ async def _run_investigation(
         project_path: Path to project
         format: Output format (markdown or cve)
         output: Optional output file path
+        force: Force re-investigation even if cached
     """
     # Load previous analysis results
     results_file = project_path / ".patchsmith" / "results.json"
@@ -94,10 +103,11 @@ async def _run_investigation(
         )
         raise click.Abort()
 
-    # Load findings
+    # Load findings and cached assessments
     with open(results_file) as f:
         data = json.load(f)
         findings_data = data.get("findings", [])
+        cached_assessments = data.get("detailed_assessments", {})
 
     # Find the specific finding
     finding_dict = next((f for f in findings_data if f["id"] == finding_id), None)
@@ -131,38 +141,61 @@ async def _run_investigation(
     console.print(f"[bold]Location:[/bold] {finding.file_path}:{finding.start_line}")
     console.print()
 
-    # Run detailed analysis with progress tracking
-    console.print("[bold cyan]Running detailed security analysis...[/bold cyan]\n")
+    # Check for cached assessment
+    assessment = None
+    if not force and finding_id in cached_assessments:
+        # Use cached assessment
+        print_success("Using cached investigation results")
+        console.print("[dim]Tip: Use --force to re-investigate[/dim]\n")
 
-    with ProgressTracker() as tracker:
-        # Create agent progress callback
-        def agent_progress_callback(current_turn: int, max_turns: int) -> None:
-            tracker.handle_progress(
-                "agent_turn_progress",
-                {
-                    "current_turn": current_turn,
-                    "max_turns": max_turns,
-                },
-            )
-
-        analysis_agent = DetailedSecurityAnalysisAgent(
-            working_dir=project_path,
-            thinking_callback=tracker.update_thinking,
-            progress_callback=agent_progress_callback,
+        assessment_data = cached_assessments[finding_id]
+        assessment = DetailedSecurityAssessment(
+            finding_id=finding_id,
+            is_false_positive=assessment_data["is_false_positive"],
+            false_positive_score=assessment_data.get("false_positive_score", 0.0),
+            false_positive_reasoning=assessment_data["false_positive_reasoning"],
+            attack_scenario=assessment_data.get("attack_scenario", ""),
+            risk_type=assessment_data.get("risk_type", "other"),
+            exploitability_score=assessment_data.get("exploitability_score", 0.0),
+            impact_description=assessment_data.get("impact_description", ""),
+            remediation_priority=assessment_data.get("remediation_priority", "low"),
         )
-        result = await analysis_agent.execute([finding])
+    else:
+        # Run detailed analysis with progress tracking
+        if force:
+            console.print("[bold cyan]Re-investigating (--force)...[/bold cyan]\n")
+        else:
+            console.print("[bold cyan]Running detailed security analysis...[/bold cyan]\n")
 
-        # Clear thinking display when agent completes
-        tracker.update_thinking("")
+        with ProgressTracker() as tracker:
+            # Create agent progress callback
+            def agent_progress_callback(current_turn: int, max_turns: int) -> None:
+                tracker.handle_progress(
+                    "agent_turn_progress",
+                    {
+                        "current_turn": current_turn,
+                        "max_turns": max_turns,
+                    },
+                )
 
-    if not result or finding.id not in result:
-        print_error("Failed to generate detailed analysis")
-        raise click.Abort()
+            analysis_agent = DetailedSecurityAnalysisAgent(
+                working_dir=project_path,
+                thinking_callback=tracker.update_thinking,
+                progress_callback=agent_progress_callback,
+            )
+            result = await analysis_agent.execute([finding])
 
-    assessment = result[finding.id]
+            # Clear thinking display when agent completes
+            tracker.update_thinking("")
 
-    # Save assessment back to cache for future report generation
-    _save_assessment_to_cache(project_path, finding.id, assessment)
+        if not result or finding.id not in result:
+            print_error("Failed to generate detailed analysis")
+            raise click.Abort()
+
+        assessment = result[finding.id]
+
+        # Save assessment back to cache for future report generation
+        _save_assessment_to_cache(project_path, finding.id, assessment)
 
     # Format results
     console.print()

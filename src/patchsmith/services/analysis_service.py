@@ -328,22 +328,32 @@ reports/
 
             # Step 6: Detailed security analysis (optional)
             detailed_assessments = None
-            if perform_detailed_analysis and triage_results:
-                # Get findings recommended for analysis
+            if perform_detailed_analysis and findings:
+                # Determine which findings to analyze
                 findings_to_analyze = []
-                recommended = [t for t in triage_results if t.recommended_for_analysis]
 
-                # Apply limit if specified, otherwise analyze all recommended
-                findings_to_process = (
-                    recommended[:detailed_analysis_limit]
-                    if detailed_analysis_limit is not None
-                    else recommended
-                )
+                if triage_results:
+                    # Case 1: Triage was performed, analyze recommended findings
+                    recommended = [t for t in triage_results if t.recommended_for_analysis]
 
-                for triage in findings_to_process:
-                    finding = next((f for f in findings if f.id == triage.finding_id), None)
-                    if finding:
-                        findings_to_analyze.append(finding)
+                    # Apply limit if specified, otherwise analyze all recommended
+                    findings_to_process = (
+                        recommended[:detailed_analysis_limit]
+                        if detailed_analysis_limit is not None
+                        else recommended
+                    )
+
+                    for triage in findings_to_process:
+                        finding = next((f for f in findings if f.id == triage.finding_id), None)
+                        if finding:
+                            findings_to_analyze.append(finding)
+                else:
+                    # Case 2: No triage, analyze all findings (--investigate-all)
+                    findings_to_analyze = (
+                        findings[:detailed_analysis_limit]
+                        if detailed_analysis_limit is not None
+                        else findings
+                    )
 
                 if findings_to_analyze:
                     self._emit_progress(

@@ -20,9 +20,16 @@ from patchsmith.services.analysis_service import AnalysisService
 @click.command()
 @click.argument("path", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option(
-    "--triage/--no-triage",
-    default=True,
-    help="Perform AI-powered triage to prioritize findings"
+    "--investigate",
+    is_flag=True,
+    default=False,
+    help="Run triage and investigate recommended findings with AI"
+)
+@click.option(
+    "--investigate-all",
+    is_flag=True,
+    default=False,
+    help="Investigate ALL findings with AI (skip triage)"
 )
 @click.option(
     "--output",
@@ -38,49 +45,58 @@ from patchsmith.services.analysis_service import AnalysisService
 )
 def analyze(
     path: Path | None,
-    triage: bool,
+    investigate: bool,
+    investigate_all: bool,
     output: Path | None,
     custom_only: bool,
 ) -> None:
-    """Run complete security analysis on a project.
+    """Run security analysis on a project.
 
     \b
-    Performs:
-      • Language detection
-      • CodeQL static analysis
-      • AI-powered triage (prioritization)
-      • Statistics computation
-
-    \b
-    For detailed analysis of specific findings, use:
-      patchsmith investigate <finding-id>
+    Analysis Modes:
+      • Default: CodeQL analysis only (fast, no AI)
+      • --investigate: Triage + investigate recommended findings (AI-powered)
+      • --investigate-all: Investigate ALL findings (AI-powered, thorough)
 
     \b
     Examples:
-        patchsmith analyze /path/to/project
-        patchsmith analyze .                      # Analyze current directory
-        patchsmith analyze --no-triage            # Skip triage step
+        patchsmith analyze                        # Quick CodeQL scan
+        patchsmith analyze --investigate          # Triage + investigate top findings
+        patchsmith analyze --investigate-all      # Deep analysis of all findings
         patchsmith analyze --custom-only          # Run only custom queries
         patchsmith analyze -o results.json        # Save results to file
     """
+    # Validate mutually exclusive flags
+    if investigate and investigate_all:
+        print_error("Cannot use both --investigate and --investigate-all")
+        raise click.Abort()
     # Use current directory if no path provided
     if path is None:
         path = Path.cwd()
 
     console.print(f"\n[bold cyan]🔒 Patchsmith Security Analysis[/bold cyan]")
     console.print(f"Project: [yellow]{path}[/yellow]")
-    if custom_only:
-        console.print(f"Mode: [yellow]Custom queries only[/yellow]\n")
+
+    # Show mode
+    if investigate_all:
+        console.print(f"Mode: [yellow]Investigate all findings (AI)[/yellow]")
+    elif investigate:
+        console.print(f"Mode: [yellow]Triage + investigate recommended (AI)[/yellow]")
     else:
-        console.print()
+        console.print(f"Mode: [yellow]Quick scan (CodeQL only)[/yellow]")
+
+    if custom_only:
+        console.print(f"Queries: [yellow]Custom only[/yellow]")
+    console.print()
 
     # Run analysis
-    asyncio.run(_run_analysis(path, triage, output, custom_only))
+    asyncio.run(_run_analysis(path, investigate, investigate_all, output, custom_only))
 
 
 async def _run_analysis(
     path: Path,
-    perform_triage: bool,
+    investigate: bool,
+    investigate_all: bool,
     output_path: Path | None,
     custom_only: bool = False,
 ) -> None:
@@ -88,7 +104,8 @@ async def _run_analysis(
 
     Args:
         path: Path to project
-        perform_triage: Whether to perform triage
+        investigate: Whether to triage and investigate recommended findings
+        investigate_all: Whether to investigate all findings (skip triage)
         output_path: Optional path to save results
         custom_only: Whether to run only custom queries
     """
@@ -99,6 +116,11 @@ async def _run_analysis(
             project_name=path.name
         )
 
+        # Determine analysis parameters based on flags
+        perform_triage = investigate  # Triage only when --investigate
+        perform_detailed_analysis = investigate or investigate_all
+        detailed_analysis_limit = None  # Analyze all that match criteria
+
         # Create progress tracker
         with ProgressTracker() as tracker:
             # Create analysis service with progress tracking and thinking display
@@ -108,11 +130,12 @@ async def _run_analysis(
                 thinking_callback=tracker.update_thinking,
             )
 
-            # Run analysis (no detailed analysis in main flow)
-            analysis_result, triage_results, _ = await service.analyze_project(
+            # Run analysis with appropriate flags
+            analysis_result, triage_results, detailed_assessments = await service.analyze_project(
                 project_path=path,
                 perform_triage=perform_triage,
-                perform_detailed_analysis=False,  # Detailed analysis moved to 'investigate' command
+                perform_detailed_analysis=perform_detailed_analysis,
+                detailed_analysis_limit=detailed_analysis_limit,
                 custom_only=custom_only,
             )
 
@@ -127,7 +150,7 @@ async def _run_analysis(
             critical_count=analysis_result.statistics.get_critical_count(),
             high_count=analysis_result.statistics.get_high_count(),
             triage_count=len(triage_results) if triage_results else 0,
-            detailed_count=0,  # No detailed analysis in main flow
+            detailed_count=len(detailed_assessments) if detailed_assessments else 0,
         )
 
         # Show top findings
@@ -142,11 +165,26 @@ async def _run_analysis(
             # Show next steps
             console.print("[bold cyan]Next Steps:[/bold cyan]")
             console.print("  • List all findings: [green]patchsmith list[/green]")
-            if triage_results and any(t.recommended_for_analysis for t in triage_results):
+
+            # Suggest next steps based on what was done
+            if detailed_assessments:
+                # Already investigated, suggest report or fix
+                console.print("  • Generate detailed report: [green]patchsmith report[/green]")
+                if analysis_result.findings:
+                    first_finding = analysis_result.findings[0]
+                    console.print(f"  • Fix finding: [green]patchsmith fix {first_finding.id}[/green]")
+            elif triage_results and any(t.recommended_for_analysis for t in triage_results):
+                # Triaged but not investigated, suggest investigation
                 top_finding = next(t for t in triage_results if t.recommended_for_analysis)
                 console.print(f"  • Investigate top priority: [green]patchsmith investigate {top_finding.finding_id}[/green]")
                 console.print(f"  • Fix top priority: [green]patchsmith fix {top_finding.finding_id}[/green]")
-            console.print("  • Generate detailed report: [green]patchsmith report[/green]")
+                console.print("  • Or re-run with: [green]patchsmith analyze --investigate[/green]")
+            else:
+                # Quick scan only, suggest investigation
+                console.print("  • Investigate findings: [green]patchsmith analyze --investigate[/green]")
+                console.print("  • Or investigate specific: [green]patchsmith investigate <finding-id>[/green]")
+                console.print("  • Generate report: [green]patchsmith report[/green]")
+
             console.print()
         else:
             console.print("[green]✓ No security vulnerabilities found![/green]\n")
@@ -157,16 +195,30 @@ async def _run_analysis(
         patchsmith_dir.mkdir(exist_ok=True)
         results_file = patchsmith_dir / "results.json"
 
-        # Preserve existing detailed assessments from previous investigations
-        existing_assessments = {}
+        # Merge detailed assessments: preserve existing + add new from this run
+        all_assessments = {}
         if results_file.exists():
             try:
                 with open(results_file) as f:
                     existing_data = json.load(f)
-                    existing_assessments = existing_data.get("detailed_assessments", {})
+                    all_assessments = existing_data.get("detailed_assessments", {})
             except Exception:
                 # If we can't read existing file, start fresh
                 pass
+
+        # Add new detailed assessments from this run
+        if detailed_assessments:
+            for finding_id, assessment in detailed_assessments.items():
+                all_assessments[finding_id] = {
+                    "is_false_positive": assessment.is_false_positive,
+                    "false_positive_score": assessment.false_positive_score,
+                    "false_positive_reasoning": assessment.false_positive_reasoning,
+                    "attack_scenario": assessment.attack_scenario,
+                    "risk_type": assessment.risk_type,
+                    "exploitability_score": assessment.exploitability_score,
+                    "impact_description": assessment.impact_description,
+                    "remediation_priority": assessment.remediation_priority,
+                }
 
         output_data = {
             "project_name": analysis_result.project_name,
@@ -201,8 +253,8 @@ async def _run_analysis(
                 }
                 for f in analysis_result.findings
             ],
-            # Preserve existing detailed assessments from previous 'investigate' commands
-            "detailed_assessments": existing_assessments,
+            # Include all detailed assessments (existing + new from this run)
+            "detailed_assessments": all_assessments,
         }
 
         # Save to project directory (always)

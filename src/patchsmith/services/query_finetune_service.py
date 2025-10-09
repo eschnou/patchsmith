@@ -286,7 +286,7 @@ class QueryFinetuneService(BaseService):
                         )
                         continue
 
-                    # Generate and validate query
+                    # Generate and validate query (agent handles iteration autonomously)
                     query_id, query_content = await agent.execute(
                         language=lang,
                         project_context=project_context,
@@ -294,7 +294,6 @@ class QueryFinetuneService(BaseService):
                         severity=severity,
                         codeql_cli=self.codeql,
                         pack_dir=pack_dir,
-                        max_retries=3,
                     )
 
                     if self.thinking_callback:

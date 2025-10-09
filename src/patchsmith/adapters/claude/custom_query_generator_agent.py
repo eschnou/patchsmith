@@ -31,46 +31,189 @@ class CustomQueryGeneratorAgent(BaseAgent):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize query generator agent with result storage."""
         super().__init__(*args, **kwargs)
-        self._query_content: str | None = None
+        self._query_path: str | None = None
         self._query_id: str | None = None
+        self.codeql_cli: "CodeQLCLI | None" = None
+        self.pack_dir: Path | None = None
 
-    def _create_submit_tool(self) -> Any:
-        """Create submit_query tool with closure to access instance state.
+    def _create_write_query_tool(self) -> Any:
+        """Create write_query tool with path validation.
 
         Returns:
-            Tool function that can access self._query_content and self._query_id
+            Tool function that writes queries with path restrictions
         """
-        # Capture self in closure
         agent_instance = self
 
         @tool(
-            "submit_query",
-            "Submit the generated CodeQL query",
+            "write_query",
+            "Write a CodeQL query file to the queries directory",
             {
-                "query_id": str,  # Query ID (e.g., "custom/postmessage-validation")
-                "query_content": str,  # Complete .ql file content
+                "filename": str,  # Query filename (e.g., "postmessage-validation.ql")
+                "content": str,   # Complete .ql file content
             },
         )
-        async def submit_query_tool(args: dict) -> dict:
-            """Tool for submitting generated query."""
-            query_id = args.get("query_id", "")
-            query_content = args.get("query_content", "")
+        async def write_query_tool(args: dict) -> dict:
+            """Tool for writing query files with validation."""
+            filename = args.get("filename", "")
+            content = args.get("content", "")
 
-            # Store in instance variable
-            agent_instance._query_id = query_id
-            agent_instance._query_content = query_content
+            # Validate filename (no path traversal)
+            if not filename or ".." in filename or "/" in filename or "\\" in filename:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Error: Invalid filename '{filename}'. Use simple filename like 'my-query.ql'",
+                        }
+                    ]
+                }
+
+            # Ensure .ql extension
+            if not filename.endswith(".ql"):
+                filename += ".ql"
+
+            # Write to pack directory
+            if not agent_instance.pack_dir:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Error: Pack directory not configured",
+                        }
+                    ]
+                }
+
+            query_path = agent_instance.pack_dir / filename
+            query_path.write_text(content)
 
             logger.info(
-                "query_submitted",
-                query_id=query_id,
-                content_length=len(query_content),
+                "query_written",
+                filename=filename,
+                path=str(query_path),
+                content_length=len(content),
             )
 
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Successfully recorded query: {query_id} ({len(query_content)} bytes)",
+                        "text": f"Successfully wrote query to: {query_path}",
+                    }
+                ]
+            }
+
+        return write_query_tool
+
+    def _create_compile_query_tool(self) -> Any:
+        """Create compile_query tool for validation.
+
+        Returns:
+            Tool function that compiles queries and returns errors
+        """
+        agent_instance = self
+
+        @tool(
+            "compile_query",
+            "Compile a CodeQL query to check for syntax errors",
+            {
+                "query_path": str,  # Path to query file to compile
+            },
+        )
+        async def compile_query_tool(args: dict) -> dict:
+            """Tool for compiling queries."""
+            query_path_str = args.get("query_path", "")
+            query_path = Path(query_path_str)
+
+            if not agent_instance.codeql_cli:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Error: CodeQL CLI not configured",
+                        }
+                    ]
+                }
+
+            if not query_path.exists():
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Error: Query file not found: {query_path}",
+                        }
+                    ]
+                }
+
+            # Compile query
+            success, error_msg = agent_instance.codeql_cli.compile_query(
+                query_path, check_only=True
+            )
+
+            logger.info(
+                "query_compiled",
+                path=str(query_path),
+                success=success,
+                error=error_msg[:200] if error_msg else None,
+            )
+
+            if success:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"✓ Query compiled successfully: {query_path}",
+                        }
+                    ]
+                }
+            else:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"✗ Compilation failed:\n{error_msg}",
+                        }
+                    ]
+                }
+
+        return compile_query_tool
+
+    def _create_submit_tool(self) -> Any:
+        """Create submit_query tool with closure to access instance state.
+
+        Returns:
+            Tool function that can access self._query_path and self._query_id
+        """
+        # Capture self in closure
+        agent_instance = self
+
+        @tool(
+            "submit_query",
+            "Submit the path to the verified working query",
+            {
+                "query_id": str,  # Query ID (e.g., "custom/postmessage-validation")
+                "query_path": str,  # Path to compiled query file
+            },
+        )
+        async def submit_query_tool(args: dict) -> dict:
+            """Tool for submitting verified query path."""
+            query_id = args.get("query_id", "")
+            query_path = args.get("query_path", "")
+
+            # Store in instance variable
+            agent_instance._query_id = query_id
+            agent_instance._query_path = query_path
+
+            logger.info(
+                "query_submitted",
+                query_id=query_id,
+                query_path=query_path,
+            )
+
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Successfully recorded query: {query_id} at {query_path}",
                     }
                 ]
             }
@@ -81,15 +224,17 @@ class CustomQueryGeneratorAgent(BaseAgent):
         """Get system prompt for custom query generation."""
         return """You are a CodeQL query writing expert who creates custom security queries using MODERN CodeQL APIs.
 
+You are autonomous and control your own iteration loop. You will write queries, compile them, debug errors, and iterate until you produce a working query.
+
+PERSONALITY & APPROACH:
+- Methodical: Research working examples before writing code
+- Iterative: Compile early and often, fix errors incrementally
+- Evidence-based: Base queries on actual project code patterns
+- Modern: Use only current CodeQL APIs, never deprecated patterns
+
 CRITICAL: USE MODERN API (CodeQL 2.13.0+)
 The old API using "class Configuration extends TaintTracking::Configuration" is DEPRECATED.
 You MUST use the modern modular API shown below to avoid deprecation warnings.
-
-Your expertise includes:
-- Modern CodeQL API (ConfigSig, Global modules)
-- Security vulnerability patterns across languages
-- Project-specific architectural risks
-- Writing queries that compile without warnings
 
 MODERN API PATTERN (Path/Taint-Tracking Problems):
 ```ql
@@ -166,51 +311,84 @@ KEY DIFFERENCES FROM OLD API:
 ✅ NEW: MyFlow::flowPath(source, sink)
 
 AVAILABLE TOOLS:
-You have access to tools to research and understand the project:
-- Read: Read source files to understand code patterns and frameworks used
-- Glob: Find files in the project (e.g., "**/*.py", "src/**/*.ts")
-- Grep: Search for specific code patterns or vulnerability examples
-- WebFetch: Look up CodeQL documentation and example queries
-- WebSearch: Search for vulnerability patterns and detection techniques
-- submit_query: Submit your generated query (YOU MUST call this with query_id and query_content)
 
-RECOMMENDED WORKFLOW:
-1. Use Glob to understand project structure and identify key files
-2. Use Read to examine actual code patterns, imports, and frameworks
-3. **IMPORTANT**: Use WebFetch/WebSearch to find working CodeQL examples:
-   - Search GitHub: "site:github.com codeql {language} {vulnerability-type} .ql"
-   - Look up official docs: "codeql {language} library documentation"
-   - Find similar queries: "codeql {language} taint tracking example"
-4. Design sources, sinks, and barriers based on actual project code AND working examples
-5. Generate the query using PROVEN syntax from examples
-6. Call submit_query with query_id and complete query_content
+Research & Analysis:
+- Read: Read source files to understand code patterns and frameworks
+- Glob: Find files matching patterns (e.g., "**/*.py", "src/**/*.ts")
+- Grep: Search for specific code patterns or vulnerability examples
+- WebFetch: Look up CodeQL documentation and working query examples
+- WebSearch: Search for vulnerability patterns and detection techniques
+
+Query Development:
+- write_query: Write a query file to disk (filename, content)
+  * Validates filename (no path traversal)
+  * Writes to queries directory
+  * Returns path for compilation
+- compile_query: Compile a query to check for errors (query_path)
+  * Returns success/failure with error messages
+  * Use this to validate before submitting
+- submit_query: Submit final verified query (query_id, query_path)
+  * Only call after successful compilation
+  * Marks query as complete
+
+AUTONOMOUS WORKFLOW (you control this loop):
+
+1. **Research Phase**:
+   - Use Glob to understand project structure
+   - Use Read to examine code patterns, imports, frameworks
+   - Use Grep to find security-relevant patterns
+   - **CRITICAL**: Use WebFetch/WebSearch to find working CodeQL examples:
+     * Search GitHub: "site:github.com codeql {language} {vulnerability} .ql"
+     * Look up docs: "codeql {language} library documentation"
+     * Find examples: "codeql {language} taint tracking example"
+   - Understand what types and predicates are actually available
+
+2. **Write Phase**:
+   - Create query based on research and working examples
+   - Include complete metadata (@name, @description, @kind, @id, @severity, @tags)
+   - Use modern CodeQL API (modules, not classes)
+   - Call write_query tool with filename and complete content
+
+3. **Compile Phase**:
+   - Call compile_query with the path from write_query
+   - Check if compilation succeeded or returned errors
+
+4. **Debug & Iterate Phase** (if compilation failed):
+   - Read your query file to see what you wrote
+   - Analyze the error messages
+   - Research correct syntax with WebFetch/WebSearch
+   - Common issues to check:
+     * Did you invent types that don't exist? (DomManipulation, BarrierGuard, etc.)
+     * Is PathGraph import after module definition?
+     * Are variable names consistent in from/where/select?
+     * Are you using deprecated class-based API?
+   - Write a FIXED version (overwrite same filename)
+   - OR write a SIMPLER query if complex approach keeps failing
+   - Compile again
+   - Repeat until compilation succeeds
+
+5. **Submit Phase**:
+   - Once compile_query returns success, call submit_query
+   - Provide query_id and query_path
+   - This marks the query as complete
 
 COMMON MISTAKES TO AVOID:
-- ❌ Making up types (e.g., DomManipulation, BarrierGuard) - use only types from CodeQL libraries
+- ❌ Making up types (e.g., DomManipulation, BarrierGuard) - use only real CodeQL library types
 - ❌ Wrong import order - PathGraph import must be AFTER module definition
 - ❌ Variable name mismatches - source/sink in from must match where clause
-- ❌ Overly complex queries - start simple, add complexity only after compilation succeeds
-- ❌ Not researching working examples - ALWAYS WebFetch examples before writing
+- ❌ Using deprecated class-based API - use modern modules
+- ❌ Overly complex queries - start simple, add complexity after basic version compiles
+- ❌ Not researching examples - ALWAYS WebFetch working examples before writing
+- ❌ Not compiling before submitting - ALWAYS verify with compile_query first
 
-SUBMISSION FORMAT:
-Call submit_query tool with:
-- query_id: Unique ID like "custom/postmessage-validation" or "custom/js-xss-dom"
-- query_content: Complete .ql file content (including metadata comments, imports, query)
+QUALITY REQUIREMENTS:
+- Query MUST compile without errors (verified by compile_query)
+- Use modern CodeQL API (modules implementing ConfigSig)
+- Include complete metadata comments
+- Be specific to the target vulnerability and project context
+- Based on real CodeQL library types and predicates (not invented)
 
-Example:
-```
-submit_query({
-  "query_id": "custom/postmessage-validation",
-  "query_content": "/**\\n * @name Insufficient postMessage origin validation\\n * @description...\\n */\\n\\nimport javascript\\n..."
-})
-```
-
-REQUIREMENTS:
-1. Use MODERN API (modules, not classes)
-2. Include complete metadata comments (@name, @description, @kind, @id, @severity, @tags)
-3. Ensure query compiles without errors
-4. Target specific security issues relevant to the project
-5. Submit via submit_query tool (NOT as text output)"""
+Take your time to research, iterate, and debug. Your goal is a working, compiled query."""
 
     async def execute(  # type: ignore[override]
         self,
@@ -220,25 +398,30 @@ REQUIREMENTS:
         severity: Severity = Severity.HIGH,
         codeql_cli: "CodeQLCLI | None" = None,
         pack_dir: "Path | None" = None,
-        max_retries: int = 3,
     ) -> tuple[str, str]:
         """
-        Generate a custom CodeQL query.
+        Generate a custom CodeQL query using autonomous agent-driven iteration.
+
+        The agent will:
+        1. Research the project and CodeQL patterns
+        2. Write query files using write_query tool
+        3. Compile using compile_query tool
+        4. Debug and iterate until compilation succeeds
+        5. Submit final verified query path
 
         Args:
             language: Target language (python, javascript, java, etc.)
             project_context: Description of project architecture, frameworks, patterns
             vulnerability_type: Specific vulnerability to detect (e.g., "SQL injection in ORM")
             severity: Query severity level
-            codeql_cli: CodeQL CLI for query compilation validation (optional)
-            pack_dir: Directory with qlpack.yml for compilation (optional, uses temp if None)
-            max_retries: Maximum compilation retry attempts
+            codeql_cli: CodeQL CLI for query compilation (required)
+            pack_dir: Directory with qlpack.yml for writing queries (required)
 
         Returns:
-            Tuple of (query_id, query_content)
+            Tuple of (query_id, query_path)
 
         Raises:
-            AgentError: If generation fails
+            AgentError: If generation fails or agent doesn't submit
         """
         logger.info(
             "custom_query_generation_started",
@@ -248,172 +431,89 @@ REQUIREMENTS:
             severity=severity.value,
         )
 
-        compilation_errors: str | None = None
-        failed_query_path: Path | None = None
-        attempt = 0
+        # Store dependencies for tool access
+        self.codeql_cli = codeql_cli
+        self.pack_dir = pack_dir
+
+        # Reset instance state
+        self._query_path = None
+        self._query_id = None
 
         try:
-            while attempt <= max_retries:
-                # Reset instance state
-                self._query_content = None
-                self._query_id = None
-
-                # Build generation prompt
-                prompt = self._build_generation_prompt(
-                    language=language,
-                    project_context=project_context,
-                    vulnerability_type=vulnerability_type,
-                    severity=severity,
-                    compilation_errors=compilation_errors,
-                    failed_query_path=failed_query_path,
-                )
-
-                # Create MCP server with custom tool
-                submit_tool = self._create_submit_tool()
-                server = create_sdk_mcp_server(
-                    name="query-generator",
-                    version="1.0.0",
-                    tools=[submit_tool],
-                )
-
-                # Query Claude with tools for research and exploration
-                options = ClaudeAgentOptions(
-                    system_prompt=self.get_system_prompt(),
-                    max_turns=50,  # Allow agent to explore and iterate
-                    allowed_tools=[
-                        "Read",      # Read codebase files to understand patterns
-                        "Glob",      # Find relevant files in the project
-                        "Grep",      # Search for vulnerability patterns
-                        "WebFetch",  # Look up CodeQL docs and examples
-                        "WebSearch", # Search for query patterns and techniques
-                        "mcp__query-generator__submit_query",  # Submit generated query
-                    ],
-                    mcp_servers={"query-generator": server},
-                    cwd=str(self.working_dir),
-                )
-
-                turn_count = 0
-
-                async with ClaudeSDKClient(options=options) as client:
-                    await client.query(prompt)
-
-                    async for message in client.receive_response():
-                        message_type = type(message).__name__
-
-                        # Track turns for progress
-                        if message_type == "AssistantMessage":
-                            turn_count += 1
-                            if self.progress_callback:
-                                self.progress_callback(turn_count, options.max_turns)
-
-                        # Extract and emit thinking updates
-                        thinking = self._extract_thinking_from_message(message)
-                        if thinking:
-                            self._emit_thinking(thinking)
-
-                # Check if tool was called
-                if self._query_content is None or self._query_id is None:
-                    raise AgentError(
-                        "Agent did not call submit_query tool - check max_turns or prompt"
-                    )
-
-                query_content = self._query_content
-                query_id = self._query_id
-
-                # Validate with CodeQL if CLI provided
-                if codeql_cli and attempt <= max_retries:
-                    # Save query for compilation
-                    if pack_dir:
-                        # Save to pack directory (proper QL pack)
-                        query_filename = (
-                            query_id.replace("custom/", "")
-                            .replace(f"{language}/", "")
-                            .replace("/", "_")
-                            + ".ql"
-                        )
-                        query_path = pack_dir / query_filename
-                        query_path.write_text(query_content)
-                    else:
-                        # Use temp directory with qlpack.yml (for testing)
-                        import tempfile
-
-                        temp_dir = Path(tempfile.mkdtemp())
-                        try:
-                            # Create minimal QL pack structure
-                            codeql_cli.create_ql_pack(temp_dir, language)
-                            codeql_cli.install_pack_dependencies(temp_dir)
-                        except Exception as pack_error:
-                            logger.warning(
-                                "temp_pack_setup_failed",
-                                error=str(pack_error),
-                            )
-                            # Continue without pack structure
-
-                        query_path = temp_dir / "query.ql"
-                        query_path.write_text(query_content)
-
-                    try:
-                        success, error_msg = codeql_cli.compile_query(
-                            query_path, check_only=True
-                        )
-
-                        if not success:
-                            logger.warning(
-                                "custom_query_compilation_failed",
-                                agent=self.agent_name,
-                                attempt=attempt + 1,
-                                error=error_msg[:300],
-                            )
-                            compilation_errors = error_msg
-                            failed_query_path = query_path  # Store path for retry
-                            attempt += 1
-
-                            if attempt <= max_retries:
-                                logger.info(
-                                    "custom_query_generation_retry",
-                                    agent=self.agent_name,
-                                    attempt=attempt,
-                                )
-                                continue
-                            else:
-                                # Max retries exceeded
-                                logger.error(
-                                    "custom_query_max_retries",
-                                    agent=self.agent_name,
-                                    attempts=attempt,
-                                )
-                                raise AgentError(
-                                    f"Query generation failed after {attempt} attempts. "
-                                    f"Last compilation error: {error_msg[:200]}"
-                                )
-                    finally:
-                        # Only clean up if we're done with all retries
-                        if attempt > max_retries or success:
-                            # Clean up temp file/directory if not using pack_dir
-                            if not pack_dir:
-                                import shutil
-
-                                if query_path.parent.name and query_path.parent != Path(
-                                    "/"
-                                ):
-                                    shutil.rmtree(query_path.parent, ignore_errors=True)
-                            # If using pack_dir and compilation failed, remove the failed query
-                            elif not success:
-                                query_path.unlink(missing_ok=True)
-
-                # Success - validation passed or disabled
-                logger.info(
-                    "custom_query_generation_completed",
-                    agent=self.agent_name,
-                    query_id=query_id,
-                    attempts=attempt + 1,
-                )
-                return (query_id, query_content)
-
-            # Should not reach here, but just in case
-            raise AgentError(
-                f"Query generation failed after {attempt} attempts"
+            # Build generation prompt
+            prompt = self._build_generation_prompt(
+                language=language,
+                project_context=project_context,
+                vulnerability_type=vulnerability_type,
+                severity=severity,
             )
+
+            # Create MCP server with all tools
+            write_tool = self._create_write_query_tool()
+            compile_tool = self._create_compile_query_tool()
+            submit_tool = self._create_submit_tool()
+            server = create_sdk_mcp_server(
+                name="query-generator",
+                version="1.0.0",
+                tools=[write_tool, compile_tool, submit_tool],
+            )
+
+            # Query Claude with tools for autonomous iteration
+            options = ClaudeAgentOptions(
+                system_prompt=self.get_system_prompt(),
+                max_turns=100,  # Allow agent to explore, iterate, and debug
+                allowed_tools=[
+                    "Read",      # Read codebase files to understand patterns
+                    "Glob",      # Find relevant files in the project
+                    "Grep",      # Search for vulnerability patterns
+                    "WebFetch",  # Look up CodeQL docs and examples
+                    "WebSearch", # Search for query patterns and techniques
+                    "mcp__query-generator__write_query",   # Write query files
+                    "mcp__query-generator__compile_query", # Compile and get errors
+                    "mcp__query-generator__submit_query",  # Submit final verified query
+                ],
+                mcp_servers={"query-generator": server},
+                cwd=str(self.working_dir),
+            )
+
+            turn_count = 0
+
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
+
+                async for message in client.receive_response():
+                    message_type = type(message).__name__
+
+                    # Track turns for progress
+                    if message_type == "AssistantMessage":
+                        turn_count += 1
+                        if self.progress_callback:
+                            self.progress_callback(turn_count, options.max_turns)
+
+                    # Extract and emit thinking updates
+                    thinking = self._extract_thinking_from_message(message)
+                    if thinking:
+                        self._emit_thinking(thinking)
+
+            # Check if agent submitted query
+            if self._query_path is None or self._query_id is None:
+                raise AgentError(
+                    "Agent did not call submit_query tool - check max_turns or prompt"
+                )
+
+            query_path = self._query_path
+            query_id = self._query_id
+
+            # Read query content from file for return
+            query_content = Path(query_path).read_text()
+
+            logger.info(
+                "custom_query_generation_completed",
+                agent=self.agent_name,
+                query_id=query_id,
+                query_path=query_path,
+            )
+            return (query_id, query_content)
 
         except AgentError:
             raise
@@ -431,51 +531,20 @@ REQUIREMENTS:
         project_context: str,
         vulnerability_type: str,
         severity: Severity,
-        compilation_errors: str | None = None,
-        failed_query_path: Path | None = None,
     ) -> str:
         """
-        Build prompt for custom query generation.
+        Build minimal user prompt with specific task parameters.
 
         Args:
             language: Target language
             project_context: Project architecture and patterns
             vulnerability_type: Vulnerability to detect
             severity: Query severity level
-            compilation_errors: Previous compilation errors (for retries)
-            failed_query_path: Path to failed query file (for retries)
 
         Returns:
-            Generation prompt
+            Task-specific prompt
         """
-        error_text = ""
-        if compilation_errors and failed_query_path:
-            error_text = f"""
-
-⚠️ PREVIOUS COMPILATION FAILED WITH ERRORS:
-{compilation_errors}
-
-FAILED QUERY LOCATION: {failed_query_path}
-
-INSTRUCTIONS FOR FIXING:
-1. Use the Read tool to read the failed query at: {failed_query_path}
-2. Use WebFetch to look up the correct CodeQL API for {language}
-   - Search for "codeql {language} data flow configuration"
-   - Look for working examples on GitHub: "site:github.com codeql {language} taint tracking"
-3. Common issues to check in the failed query:
-   - Are you using modern API (module implements ConfigSig) not deprecated classes?
-   - Are import statements correct? (e.g., "import javascript" not "import Javascript")
-   - Do the types exist? (e.g., DataFlow::Node, not made-up types)
-   - Is the PathGraph import after module definition?
-   - Are variable names consistent in from/where/select?
-4. Generate a SIMPLER query if the complex one keeps failing
-   - Start with basic pattern matching (kind: problem) not data flow
-   - Add complexity only after basic query compiles
-
-Read the failed query, research the correct syntax, then regenerate and submit via submit_query tool.
-"""
-
-        return f"""Generate a custom CodeQL security query with the following requirements:
+        return f"""Create a custom CodeQL security query for this specific vulnerability:
 
 TARGET LANGUAGE: {language}
 VULNERABILITY TYPE: {vulnerability_type}
@@ -484,25 +553,7 @@ SEVERITY: {severity.value}
 PROJECT CONTEXT:
 {project_context}
 
-TASK:
-1. Research the project to understand relevant code patterns and frameworks
-2. Generate a complete, compilable CodeQL query (.ql file) that detects this specific vulnerability
-3. Submit the query using the submit_query tool
-
-The query should:
-1. Include all required metadata (@name, @description, @kind, @id, @severity, @tags)
-2. Import appropriate CodeQL libraries for {language}
-3. Use MODERN API (modules, not classes)
-4. Define predicates or modules as needed
-5. Implement the detection logic (from/where/select)
-6. Be syntactically correct and ready to compile
-7. Be specific to the project context provided
-
-After generating the query, call submit_query with:
-- query_id: A unique ID like "custom/{language}-postmessage-validation"
-- query_content: The complete .ql file content (as a string)
-
-{error_text}"""
+Follow your autonomous workflow to research, write, compile, debug, and submit a working query."""
 
     def _parse_response(self, response: str) -> str:
         """DEPRECATED: Parse response to extract query content.

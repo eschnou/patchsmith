@@ -166,7 +166,7 @@ class ProgressTracker:
             finding_id = data.get("finding_id", "unknown")
             severity = data.get("severity", "unknown")
 
-            description = f"Analyzing finding {current}/{total} ({severity})"
+            description = f"Analyzing {finding_id} ({current}/{total}) - {severity}"
 
             # Update or create detailed analysis task with actual progress
             base_event = "detailed_analysis_started"
