@@ -108,24 +108,24 @@ patchsmith analyze [PATH] [OPTIONS]
 ```
 
 **Options:**
-- `--triage / --no-triage` - Enable/disable AI triage (default: on)
-- `--detailed / --no-detailed` - Enable/disable detailed analysis (default: on)
-- `--detailed-limit INTEGER` - Max findings for detailed analysis (default: 5)
+- `--investigate` - Run deep AI investigation on top 10 priority groups (default: off)
+- `--investigate-all` - Run deep AI investigation on ALL findings (slow, expensive)
+- `--custom-only` - Only run custom CodeQL queries (skip built-in queries)
 - `-o, --output PATH` - Save results to JSON file
 
 **Examples:**
 ```bash
-# Analyze current directory
+# Quick analysis (triage only, no investigation)
 patchsmith analyze
 
+# Full analysis with deep investigation of top 10 groups
+patchsmith analyze --investigate
+
 # Analyze specific project
-patchsmith analyze ~/code/my-app
+patchsmith analyze ~/code/my-app --investigate
 
-# Skip triage for faster analysis
-patchsmith analyze --no-triage
-
-# Analyze more findings in detail
-patchsmith analyze --detailed-limit 10
+# Investigate ALL findings (warning: slow and expensive!)
+patchsmith analyze --investigate-all
 
 # Save results to file
 patchsmith analyze -o results.json
@@ -133,24 +133,39 @@ patchsmith analyze -o results.json
 
 **What it does:**
 1. Detects programming languages in your project
-2. Creates CodeQL database
-3. Runs security-focused queries
-4. Parses SARIF results
-5. Uses AI to triage/prioritize findings
-6. Performs detailed security assessment on top issues
-7. Computes statistics
+2. Creates CodeQL database (or reuses cached one)
+3. Runs security-focused CodeQL queries
+4. Parses SARIF results into findings
+5. **Always triages ALL findings** - groups similar patterns, assigns priority scores
+6. (Optional) Performs deep AI investigation on top priority groups
+
+**Analysis Modes:**
+
+- **Default (triage only)**: Fast analysis that groups findings and assigns priority scores. Top 10 groups marked for investigation but not actually investigated yet. Use this for quick scans.
+
+- **With `--investigate`**: Full analysis that investigates the top 10 priority groups with AI. Each group gets detailed security assessment (attack scenarios, exploitability, impact). Recommended for thorough security reviews.
+
+- **With `--investigate-all`**: Investigates EVERY finding/group with AI. Very slow and expensive - only use when you need complete coverage.
+
+**Finding Grouping:**
+
+Patchsmith automatically groups similar findings to avoid redundant investigations:
+- Same vulnerability type + same file + similar pattern = ONE group
+- Groups shown with 🔗×N indicator (e.g., `F-20 🔗×6` = 6 instances)
+- AI investigates the representative finding, applies insights to all instances
+- Saves time and API costs while maintaining thorough analysis
 
 **Output:**
 - Progress bars showing each step
-- Summary table with findings count by severity
-- Top 10 findings table
-- Recommendations for next steps
+- Triage table with top 10 prioritized groups (shows grouping indicators)
+- Summary statistics by severity
+- Results cached in `.patchsmith/results.json` for later use
 
 ---
 
 ### `patchsmith report`
 
-Generate a comprehensive security report.
+Generate a comprehensive security report from cached analysis results.
 
 **Usage:**
 ```bash
@@ -158,9 +173,8 @@ patchsmith report [PATH] [OPTIONS]
 ```
 
 **Options:**
-- `-f, --format [markdown|html|text]` - Report format (default: markdown)
+- `-f, --format [markdown|html]` - Report format (default: markdown)
 - `-o, --output PATH` - Output file path
-- `--no-analysis` - Use existing analysis data (not yet implemented)
 
 **Examples:**
 ```bash
@@ -178,15 +192,24 @@ patchsmith report ~/code/my-app
 ```
 
 **What it includes:**
-- Executive summary
-- Statistics and metrics
-- Detailed findings with triage results
-- Security assessments (attack scenarios, exploitability)
+- Executive summary with key risks and immediate actions
+- Statistics and metrics (counts by severity, most common CWEs)
+- **Prioritized findings** organized by remediation priority (Immediate/High/Medium/Low)
+- **Additional findings** - triaged but not deeply investigated (summary table)
+- Detailed security assessments for investigated findings (attack scenarios, exploitability)
 - Remediation recommendations
 
+**Report Sections:**
+
+1. **Immediate/High/Medium/Low Priority Findings**: Deeply investigated findings with AI analysis, organized by remediation urgency. Shows grouping info (🔗×N) and related instances.
+
+2. **Additional Findings (Triaged, Not Deeply Analyzed)**: Summary table of findings that were triaged and prioritized but not selected for deep investigation. Includes priority scores and grouping information.
+
 **Output:**
-- Report saved to `.patchsmith_reports/<project>_security_report.<format>`
+- Report saved to `.patchsmith/reports/<project>_security_report.<format>`
 - Preview of first 20 lines in terminal
+
+**Note:** Report reads from cached results in `.patchsmith/results.json`. Run `patchsmith analyze` first to generate/update the data.
 
 ---
 
@@ -267,6 +290,162 @@ patchsmith init --name "My App"
 
 ---
 
+### `patchsmith finetune`
+
+Generate custom CodeQL queries tailored to your project's patterns and architecture.
+
+**Usage:**
+```bash
+patchsmith finetune [PATH] [OPTIONS]
+```
+
+**Options:**
+- `-o, --output PATH` - Output directory for custom queries (default: `.patchsmith/custom_queries/`)
+
+**Examples:**
+```bash
+# Generate custom queries for current project
+patchsmith finetune
+
+# Generate for specific project
+patchsmith finetune ~/code/my-app
+
+# Save to custom location
+patchsmith finetune -o ~/queries/
+```
+
+**What it does:**
+1. Analyzes your project's code patterns and architecture
+2. Identifies language-specific security risks
+3. Uses AI to generate targeted CodeQL queries
+4. Saves queries to `.patchsmith/custom_queries/`
+
+**Custom queries are automatically used in future analysis runs.**
+
+**Output:**
+- Custom query files (`.ql` files)
+- Query suite file referencing all custom queries
+- Summary of generated queries
+
+---
+
+### `patchsmith investigate`
+
+Run deep AI security investigation on a specific finding or group.
+
+**Usage:**
+```bash
+patchsmith investigate <FINDING_ID> [PATH] [OPTIONS]
+```
+
+**Arguments:**
+- `FINDING_ID` - The finding ID to investigate (e.g., `F-20`)
+
+**Examples:**
+```bash
+# Investigate specific finding
+patchsmith investigate F-20
+
+# Investigate finding in specific project
+patchsmith investigate F-20 ~/code/my-app
+```
+
+**What it does:**
+1. Loads the finding from cached results
+2. Runs detailed AI security assessment
+3. Analyzes attack scenarios and exploitability
+4. Provides impact analysis and remediation guidance
+5. Updates cached results with investigation data
+
+**Use this when:**
+- You want to investigate a specific finding that wasn't in the top 10
+- You need more detail on a particular vulnerability
+- You're reviewing triaged findings from the "Additional Findings" section
+
+**Output:**
+- Detailed analysis printed to console
+- Results saved to `.patchsmith/results.json`
+
+---
+
+### `patchsmith list`
+
+List all findings from the last analysis with grouping and triage information.
+
+**Usage:**
+```bash
+patchsmith list [PATH] [OPTIONS]
+```
+
+**Options:**
+- `--severity [critical|high|medium|low|info]` - Filter by severity
+- `--limit INTEGER` - Max findings to show (default: 50)
+- `--show-all` - Show all findings (no limit)
+
+**Examples:**
+```bash
+# List top 50 findings
+patchsmith list
+
+# Show only critical findings
+patchsmith list --severity critical
+
+# Show all findings
+patchsmith list --show-all
+
+# List findings for specific project
+patchsmith list ~/code/my-app
+```
+
+**What it shows:**
+- Finding ID with grouping indicator (🔗×N if grouped)
+- Priority score (from triage)
+- Severity level
+- Vulnerability type (rule ID)
+- Location (file:line)
+
+**Output:**
+- Formatted table with all findings
+- Groups are shown with their total instance count
+- Color-coded by severity
+
+---
+
+### `patchsmith clean`
+
+Clean cached analysis data and temporary files.
+
+**Usage:**
+```bash
+patchsmith clean [PATH] [OPTIONS]
+```
+
+**Options:**
+- `--all` - Remove CodeQL database and all cached data
+- `--reports` - Remove generated reports only
+- `--db` - Remove CodeQL database only
+
+**Examples:**
+```bash
+# Clean cached results (keeps database for faster re-analysis)
+patchsmith clean
+
+# Remove everything including database
+patchsmith clean --all
+
+# Remove only reports
+patchsmith clean --reports
+```
+
+**What it cleans:**
+- `.patchsmith/results.json` - Cached analysis results
+- `.patchsmith/reports/` - Generated reports
+- `.patchsmith/codeql_db/` - CodeQL database (with `--hard`)
+
+**Note:** Cleaning the database will require full CodeQL analysis on next run (slower).
+
+---
+
 ## Typical Workflow
 
 ### First Time Analysis
@@ -278,34 +457,66 @@ cd ~/code/my-app
 # 2. Initialize (optional but recommended)
 patchsmith init
 
-# 3. Run analysis
-patchsmith analyze
+# 3. Run full analysis with investigation
+patchsmith analyze --investigate
 
-# 4. Generate report
-patchsmith report
+# 4. Generate HTML report
+patchsmith report --format html
 
 # 5. Fix high-priority issues
 patchsmith fix --interactive
 ```
 
+### Quick Security Check (Triage Only)
+
+```bash
+# Run quick triage (no investigation)
+patchsmith analyze
+
+# View findings
+patchsmith list
+
+# Investigate specific concerning finding
+patchsmith investigate F-20
+```
+
+### Advanced Workflow with Custom Queries
+
+```bash
+# 1. Generate project-specific queries
+patchsmith finetune
+
+# 2. Run analysis with custom queries
+patchsmith analyze --investigate
+
+# 3. Generate comprehensive report
+patchsmith report --format html
+```
+
 ### Regular Security Checks
 
 ```bash
-# Quick scan
-patchsmith analyze --no-detailed
+# Quick scan (triage only, no investigation)
+patchsmith analyze
 
-# Full scan with report
-patchsmith analyze && patchsmith report --format html
+# Full scan with deep investigation and report
+patchsmith analyze --investigate && patchsmith report --format html
+
+# Investigate only custom query findings
+patchsmith analyze --custom-only --investigate
 ```
 
 ### CI/CD Integration
 
 ```bash
-# Run analysis and save results
-patchsmith analyze --no-detailed -o security-results.json
+# Run quick analysis and save results
+patchsmith analyze -o security-results.json
+
+# Generate report for artifacts
+patchsmith report --format html
 
 # Fail build if critical/high findings exist
-# (custom script to parse results.json)
+# (custom script to parse security-results.json)
 ```
 
 ## Configuration
@@ -375,10 +586,19 @@ Patchsmith needs an Anthropic API key. Configure it using:
 
 ### Performance
 
-- **First run is slow** - CodeQL database creation takes time
-- **Subsequent runs are faster** - Database is cached
-- **Use `--no-detailed`** for quick scans
-- **Adjust `--detailed-limit`** based on project size
+- **First run is slow** - CodeQL database creation takes time (5-20 minutes for large projects)
+- **Subsequent runs are faster** - Database is cached in `.patchsmith/codeql_db/`
+- **Use default mode** for quick scans (triage only, no investigation)
+- **Use `--investigate`** only when you need deep analysis (adds 10-30 minutes)
+- **Avoid `--investigate-all`** unless absolutely necessary (very slow and expensive)
+
+### Analysis Strategy
+
+- **Start with triage**: Run `patchsmith analyze` to get prioritized findings
+- **Review top 10 groups**: Check if the grouping makes sense
+- **Investigate selectively**: Use `patchsmith investigate F-X` for specific findings
+- **Use `--investigate`** for comprehensive reports (top 10 groups get deep analysis)
+- **Understanding grouping**: 🔗×N indicator shows N instances of same pattern, AI analyzes representative
 
 ### Accuracy
 
@@ -386,6 +606,7 @@ Patchsmith needs an Anthropic API key. Configure it using:
 - **Use `--interactive` mode** - Safer than auto-apply
 - **Check confidence scores** - Low confidence (<0.7) needs manual review
 - **Test after applying fixes** - Run your test suite
+- **Verify grouped findings** - Representative analysis applies to all instances, but check edge cases
 
 ### Git Workflow
 

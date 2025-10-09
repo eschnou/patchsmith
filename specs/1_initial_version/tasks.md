@@ -300,7 +300,7 @@ This document contains the full implementation history and task tracking for Pat
 
 - [x] **TASK-037: Implement result persistence** ✅ **(HANDLED BY CLI)**
   - Results saved via CLI `--output` option
-  - Saved to `.patchsmith_reports/` directory
+  - Saved to `.patchsmith/reports/` directory
   - Test: Manual testing confirmed file creation
 
 ### 3.4 Query Service *(DEFERRED TO v0.2.0)*
@@ -326,7 +326,7 @@ This document contains the full implementation history and task tracking for Pat
   - Test: Report format validated in tests
 
 - [x] **TASK-042: Implement report persistence** ✅ **(HANDLED BY CLI)**
-  - Reports saved to `.patchsmith_reports/<project>_security_report.<format>`
+  - Reports saved to `.patchsmith/reports/<project>_security_report.<format>`
   - CLI handles file creation and preview
   - Test: Manual testing confirmed report generation
 
@@ -471,7 +471,7 @@ This document contains the full implementation history and task tracking for Pat
   - Feature: `patchsmith diff` command to compare analyses
 
 **Current Workaround (v0.1.0):**
-- Analysis results saved to `.patchsmith_reports/` directory
+- Analysis results saved to `.patchsmith/reports/` directory
 - Reports include all findings and statistics
 - No historical tracking or comparison features
 

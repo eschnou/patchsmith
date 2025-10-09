@@ -32,7 +32,7 @@ def clean(path: Path | None, hard: bool, yes: bool) -> None:
     \b
     By default, removes:
       • .patchsmith/results.json (cached analysis data)
-      • .patchsmith_reports/ (generated reports)
+      • .patchsmith/reports/ (generated reports)
 
     \b
     With --hard flag, also removes:
@@ -59,7 +59,7 @@ def clean(path: Path | None, hard: bool, yes: bool) -> None:
     if results_file.exists():
         items_to_clean.append(("Cached results", results_file, "file"))
 
-    reports_dir = path.parent / ".patchsmith_reports"
+    reports_dir = path / ".patchsmith" / "reports"
     if reports_dir.exists():
         items_to_clean.append(("Reports directory", reports_dir, "dir"))
 

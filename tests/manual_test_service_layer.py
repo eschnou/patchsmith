@@ -211,8 +211,8 @@ async def run_service_layer_workflow(project_path: Path) -> None:
     print_section("Phase 5: Generating Security Report")
 
     try:
-        report_output_dir = project_path.parent / ".patchsmith_reports"
-        report_output_dir.mkdir(exist_ok=True)
+        report_output_dir = project_path / ".patchsmith" / "reports"
+        report_output_dir.mkdir(parents=True, exist_ok=True)
         report_path = report_output_dir / f"{project_path.name}_security_report.md"
 
         report = await report_service.generate_report(

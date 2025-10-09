@@ -8,6 +8,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Current Status**: Phase 1 (Foundation) complete - 69 tests passing, 62% coverage, all domain models implemented.
 
+## Development Workflow
+
+### Spec-Driven Development
+
+Patchsmith uses **spec-driven development** for major release iterations. This ensures thorough planning, clear requirements, and systematic implementation.
+
+**Specification Structure:**
+
+Each major version has a dedicated specification folder in `specs/` with incremental versioning:
+
+```
+specs/
+├── 1_initial_version/     # v0.1.0 specs
+│   ├── requirements.md    # Full requirements specification
+│   ├── design.md          # Technical design and architecture
+│   └── tasks.md           # Implementation tasks and checklist
+├── 2_next_version/        # v0.2.0 specs (future)
+│   ├── requirements.md
+│   ├── design.md
+│   └── tasks.md
+└── 3_future_version/      # v0.3.0 specs (future)
+    └── ...
+```
+
+**Development Process:**
+
+1. **Planning Phase** - Create spec folder for next version:
+   - `requirements.md` - Define features, user stories, acceptance criteria
+   - `design.md` - Design architecture, data models, API contracts
+   - `tasks.md` - Break down into actionable tasks with checkboxes
+
+2. **Implementation Phase** - Work through tasks systematically:
+   - Check off tasks as completed in `tasks.md`
+   - Update specs if requirements change during implementation
+   - Keep specs accurate as living documentation
+
+3. **Release** - Version is complete when all tasks checked off
+
+**Spec File Purposes:**
+
+- **requirements.md** - What we're building and why (product requirements)
+- **design.md** - How we're building it (technical architecture, patterns, decisions)
+- **tasks.md** - Detailed implementation checklist (broken down by component/phase)
+
+**Important:** For large features or architectural changes, always consult the relevant spec files in `specs/` before making changes. These documents contain the authoritative design decisions and requirements.
+
 ## Development Commands
 
 ### Setup
@@ -221,14 +267,21 @@ The next phase involves implementing:
 2. Claude AI agents (`adapters/claude/`)
 3. Git operations wrapper (`adapters/git/`)
 
-See `documentation/tasks.md` for detailed task breakdown.
+See `specs/1_initial_version/tasks.md` for detailed task breakdown.
 
 ## Design Documents
 
-- `documentation/requirements.md` - Full requirements specification
-- `documentation/product.md` - Product pitch and business case
-- `documentation/design.md` - Complete technical design (2000+ lines)
-- `documentation/tasks.md` - All 124 implementation tasks across 11 phases
+### Current Version (v0.1.0)
+
+- `specs/1_initial_version/requirements.md` - Full requirements specification
+- `specs/1_initial_version/design.md` - Complete technical design (2000+ lines)
+- `specs/1_initial_version/tasks.md` - All 124 implementation tasks across 11 phases
+
+### General Documentation
+
+- `documentation/product.md` - Product pitch and business case (if exists)
+
+**Note:** Always refer to `specs/<version>/` for version-specific requirements and design decisions.
 
 ## Important Notes
 

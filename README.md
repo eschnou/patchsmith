@@ -5,16 +5,18 @@
 Patchsmith combines the power of [CodeQL](https://codeql.github.com/) static analysis with [Claude AI](https://www.anthropic.com/claude) to automatically detect, triage, and fix security vulnerabilities in your codebase.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 ## ✨ Features
 
 - 🔍 **Static Analysis** - Powered by GitHub's CodeQL engine
-- 🤖 **AI Triage** - Intelligent prioritization of security findings
+- 🤖 **AI Triage** - Intelligent prioritization and grouping of security findings
+- 🔗 **Smart Grouping** - Automatically groups similar findings to avoid redundant analysis
 - 🔬 **Detailed Assessment** - Comprehensive security analysis with attack scenarios
+- 🎯 **Custom Queries** - AI-generated CodeQL queries tailored to your project
 - 🛠️ **Automated Fixing** - AI-generated patches for vulnerabilities
-- 📊 **Rich Reports** - Detailed reports in Markdown, HTML, or text
+- 📊 **Rich Reports** - Detailed reports in Markdown and HTML
 - 🎨 **Beautiful CLI** - Intuitive interface with progress tracking
 - 🔄 **Git Integration** - Automatic branching and commits for fixes
 
@@ -88,14 +90,44 @@ patchsmith init
 ### Run Security Analysis
 
 ```bash
-# Analyze current directory
+# Quick triage (fast, groups findings, assigns priorities)
 patchsmith analyze
 
+# Full analysis with deep investigation of top 10 groups
+patchsmith analyze --investigate
+
 # Analyze specific project
-patchsmith analyze /path/to/project
+patchsmith analyze /path/to/project --investigate
 
 # Save results to file
 patchsmith analyze -o results.json
+```
+
+### Generate Custom Queries
+
+```bash
+# Generate project-specific CodeQL queries
+patchsmith finetune
+
+# Use custom queries in analysis
+patchsmith analyze --investigate
+```
+
+### List Findings
+
+```bash
+# List all findings with grouping info
+patchsmith list
+
+# Show only critical findings
+patchsmith list --severity critical
+```
+
+### Investigate Specific Finding
+
+```bash
+# Deep investigation of a specific finding
+patchsmith investigate F-20
 ```
 
 ### Generate Report
@@ -121,11 +153,48 @@ patchsmith fix <finding-id>
 patchsmith fix <finding-id> --apply
 ```
 
+### Clean Cached Data
+
+```bash
+# Clean cached results (keeps database)
+patchsmith clean
+
+# Remove everything including database
+patchsmith clean --all
+```
+
+## 🔄 Workflow
+
+Patchsmith uses a **two-tier analysis system**:
+
+1. **Triage (Always Runs)** - Fast analysis that:
+   - Groups similar findings (e.g., 6 instances of same pattern → 1 group)
+   - Assigns priority scores to all groups
+   - Marks top 10 groups for deep investigation
+   - Takes ~5-20 minutes
+
+2. **Investigation (Optional with `--investigate`)** - Deep AI analysis that:
+   - Analyzes top 10 priority groups in detail
+   - Generates attack scenarios and impact assessments
+   - Provides exploitability scores and remediation guidance
+   - Takes additional ~10-30 minutes
+
+**Grouping Example:**
+```
+50 raw findings → 15 distinct groups → top 10 investigated
+```
+
+**Grouping Indicators:**
+- `F-20` - Single finding
+- `F-20 🔗×6` - Group of 6 similar findings
+
+This approach saves time and API costs while ensuring thorough analysis of critical issues.
+
 ## 📚 Documentation
 
 - **[CLI Guide](CLI_GUIDE.md)** - Complete command reference and examples
-- **[Architecture](documentation/design.md)** - Technical design and architecture
-- **[Requirements](documentation/requirements.md)** - Full requirements specification
+- **[Architecture](documentation/sdd/v1/design.mdsign.md)** - Technical design and architecture
+- **[Requirements](documentation/sdd/v1/requirements.mdents.md)** - Full requirements specification
 
 ## 🏗️ Architecture
 
@@ -171,7 +240,22 @@ poetry run python tests/manual_test_service_layer.py /path/to/project
 
 ## 📜 License
 
-MIT License - see the [LICENSE](LICENSE) file for details.
+Patchsmith is free and open-source software licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+
+This means you can:
+- ✅ Use Patchsmith for any purpose (commercial or personal)
+- ✅ Study and modify the source code
+- ✅ Distribute copies of Patchsmith
+- ✅ Distribute modified versions
+
+**Requirements:**
+- 📋 Any distributed modifications must also be open-source under GPL-3.0
+- 📋 You must include the original license and copyright notices
+- 📋 You must state significant changes made to the software
+
+See the [LICENSE](LICENSE) file for the full license text.
+
+**Why GPL-3.0?** We believe security tools should be transparent and open. The GPL ensures that improvements to Patchsmith remain available to the entire security community.
 
 ## 🙏 Acknowledgments
 

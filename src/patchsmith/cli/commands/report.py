@@ -32,7 +32,7 @@ from patchsmith.services.report_service import ReportService
     "--output",
     "-o",
     type=click.Path(path_type=Path),
-    help="Output file path (default: .patchsmith_reports/<project>_report.<format>)"
+    help="Output file path (default: .patchsmith/reports/<project>_report.<format>)"
 )
 def report(
     path: Path | None,
@@ -91,8 +91,8 @@ async def _generate_report(
 
         # Determine output path
         if output_path is None:
-            report_dir = path.parent / ".patchsmith_reports"
-            report_dir.mkdir(exist_ok=True)
+            report_dir = path / ".patchsmith" / "reports"
+            report_dir.mkdir(parents=True, exist_ok=True)
             extension = {"markdown": "md", "html": "html"}[report_format]
             output_path = report_dir / f"{path.name}_security_report.{extension}"
 
