@@ -471,3 +471,167 @@ class CodeQLCLI:
                 error=str(e),
             )
             raise
+
+    def create_ql_pack(
+        self,
+        pack_dir: Path,
+        language: str,
+        pack_name: str = "patchsmith-custom-queries",
+    ) -> None:
+        """
+        Create a CodeQL pack structure with qlpack.yml.
+
+        Args:
+            pack_dir: Directory to create pack in
+            language: Target language (python, javascript, java, etc.)
+            pack_name: Name of the pack (default: patchsmith-custom-queries)
+
+        Raises:
+            CodeQLError: If pack creation fails
+        """
+        pack_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create qlpack.yml
+        qlpack_path = pack_dir / "qlpack.yml"
+
+        # Map language to standard library pack
+        # Note: TypeScript uses the same pack as JavaScript in CodeQL
+        standard_libs = {
+            "python": "codeql/python-all",
+            "javascript": "codeql/javascript-all",
+            "typescript": "codeql/javascript-all",  # TypeScript uses JS pack
+            "java": "codeql/java-all",
+            "go": "codeql/go-all",
+            "cpp": "codeql/cpp-all",
+            "c": "codeql/cpp-all",  # C uses the same pack as C++
+            "csharp": "codeql/csharp-all",
+            "ruby": "codeql/ruby-all",
+        }
+
+        standard_lib = standard_libs.get(language.lower())
+        if not standard_lib:
+            raise CodeQLError(f"Unsupported language for QL pack: {language}")
+
+        # Create qlpack.yml content
+        qlpack_content = f"""name: patchsmith/{pack_name}-{language}
+version: 0.0.1
+dependencies:
+  {standard_lib}: "*"
+"""
+
+        qlpack_path.write_text(qlpack_content)
+
+        logger.info(
+            "ql_pack_created",
+            pack_dir=str(pack_dir),
+            language=language,
+        )
+
+    def install_pack_dependencies(self, pack_dir: Path) -> None:
+        """
+        Install dependencies for a CodeQL pack.
+
+        This runs `codeql pack install` to download dependencies
+        declared in qlpack.yml.
+
+        Args:
+            pack_dir: Directory containing qlpack.yml
+
+        Raises:
+            CodeQLError: If pack installation fails
+        """
+        qlpack_path = pack_dir / "qlpack.yml"
+        if not qlpack_path.exists():
+            raise CodeQLError(
+                f"qlpack.yml not found in {pack_dir}. "
+                "Create pack structure first with create_ql_pack()"
+            )
+
+        logger.info("pack_install_started", pack_dir=str(pack_dir))
+
+        args = ["pack", "install", str(pack_dir)]
+
+        try:
+            # Pack installation can take a while
+            self._run(args, cwd=pack_dir, timeout=300)
+
+            logger.info("pack_install_completed", pack_dir=str(pack_dir))
+
+        except CodeQLError as e:
+            logger.error(
+                "pack_install_failed",
+                pack_dir=str(pack_dir),
+                error=str(e),
+            )
+            raise
+
+    def compile_query(
+        self,
+        query_path: Path,
+        check_only: bool = True,
+    ) -> tuple[bool, str]:
+        """
+        Compile or validate a CodeQL query.
+
+        This method can be used to:
+        1. Validate query syntax (check_only=True) - fast validation
+        2. Fully compile a query (check_only=False) - slower, generates query plan
+
+        Args:
+            query_path: Path to .ql query file
+            check_only: If True, only validate syntax without full compilation
+
+        Returns:
+            Tuple of (success: bool, error_message: str)
+            - If successful: (True, "")
+            - If failed: (False, error_message)
+
+        Raises:
+            CodeQLError: If query file doesn't exist or is not a .ql file
+        """
+        if not query_path.exists():
+            raise CodeQLError(f"Query file does not exist: {query_path}")
+
+        if query_path.suffix != ".ql":
+            raise CodeQLError(
+                f"Query file must have .ql extension: {query_path}"
+            )
+
+        # Build command arguments
+        args = ["query", "compile"]
+
+        if check_only:
+            args.append("--check-only")
+
+        args.append(str(query_path))
+
+        logger.info(
+            "codeql_query_compilation_started",
+            query=str(query_path),
+            check_only=check_only,
+        )
+
+        try:
+            # Run compilation (shorter timeout for check-only)
+            timeout = 60 if check_only else 300
+            result = self._run(args, timeout=timeout)
+
+            logger.info(
+                "codeql_query_compilation_completed",
+                query=str(query_path),
+            )
+
+            return (True, "")
+
+        except CodeQLError as e:
+            # Extract error message from stderr
+            error_msg = str(e)
+
+            logger.warning(
+                "codeql_query_compilation_failed",
+                query=str(query_path),
+                error=error_msg[:500],  # Truncate long errors
+            )
+
+            # Return failure with error message (don't raise)
+            return (False, error_msg)

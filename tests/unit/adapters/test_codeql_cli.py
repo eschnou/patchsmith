@@ -758,3 +758,123 @@ creationMetadata:
 
         with pytest.raises(CodeQLError, match="CodeQL command failed"):
             cli.upgrade_database(db_path)
+
+    @patch("subprocess.run")
+    def test_compile_query_success(self, mock_run: Mock, tmp_path: Path) -> None:
+        """Test successful query compilation."""
+        mock_run.side_effect = [
+            Mock(
+                returncode=0,
+                stdout=json.dumps({"version": "2.15.3"}),
+                stderr="",
+            ),
+            Mock(
+                returncode=0,
+                stdout="Query compiled successfully",
+                stderr="",
+            ),
+        ]
+
+        cli = CodeQLCLI()
+
+        # Create a test query file
+        query_path = tmp_path / "test.ql"
+        query_path.write_text("select 1")
+
+        success, error = cli.compile_query(query_path, check_only=True)
+
+        assert success is True
+        assert error == ""
+        # Verify command was called with correct args
+        assert mock_run.call_count == 2
+        call_args = mock_run.call_args_list[1][0][0]
+        assert "query" in call_args
+        assert "compile" in call_args
+        assert "--check-only" in call_args
+
+    @patch("subprocess.run")
+    def test_compile_query_failure(self, mock_run: Mock, tmp_path: Path) -> None:
+        """Test query compilation with errors."""
+        mock_run.side_effect = [
+            Mock(
+                returncode=0,
+                stdout=json.dumps({"version": "2.15.3"}),
+                stderr="",
+            ),
+            subprocess.CalledProcessError(
+                returncode=1,
+                cmd=["codeql", "query", "compile"],
+                stderr="Syntax error at line 5",
+            ),
+        ]
+
+        cli = CodeQLCLI()
+
+        query_path = tmp_path / "test.ql"
+        query_path.write_text("invalid query")
+
+        success, error = cli.compile_query(query_path, check_only=True)
+
+        assert success is False
+        assert "Syntax error" in error
+
+    @patch("subprocess.run")
+    def test_compile_query_full_compilation(self, mock_run: Mock, tmp_path: Path) -> None:
+        """Test full query compilation (not check-only)."""
+        mock_run.side_effect = [
+            Mock(
+                returncode=0,
+                stdout=json.dumps({"version": "2.15.3"}),
+                stderr="",
+            ),
+            Mock(
+                returncode=0,
+                stdout="Query compiled",
+                stderr="",
+            ),
+        ]
+
+        cli = CodeQLCLI()
+
+        query_path = tmp_path / "test.ql"
+        query_path.write_text("select 1")
+
+        success, error = cli.compile_query(query_path, check_only=False)
+
+        assert success is True
+        # Verify --check-only was NOT included
+        call_args = mock_run.call_args_list[1][0][0]
+        assert "--check-only" not in call_args
+
+    @patch("subprocess.run")
+    def test_compile_query_nonexistent_file(self, mock_run: Mock, tmp_path: Path) -> None:
+        """Test compilation with nonexistent query file."""
+        mock_run.return_value = Mock(
+            returncode=0,
+            stdout=json.dumps({"version": "2.15.3"}),
+            stderr="",
+        )
+
+        cli = CodeQLCLI()
+
+        query_path = tmp_path / "nonexistent.ql"
+
+        with pytest.raises(CodeQLError, match="Query file does not exist"):
+            cli.compile_query(query_path)
+
+    @patch("subprocess.run")
+    def test_compile_query_wrong_extension(self, mock_run: Mock, tmp_path: Path) -> None:
+        """Test compilation with non-.ql file."""
+        mock_run.return_value = Mock(
+            returncode=0,
+            stdout=json.dumps({"version": "2.15.3"}),
+            stderr="",
+        )
+
+        cli = CodeQLCLI()
+
+        query_path = tmp_path / "test.txt"
+        query_path.write_text("not a query")
+
+        with pytest.raises(CodeQLError, match="must have .ql extension"):
+            cli.compile_query(query_path)

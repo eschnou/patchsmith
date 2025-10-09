@@ -111,6 +111,7 @@ class ProgressTracker:
 
         # Map events to user-friendly descriptions
         descriptions = {
+            # Analysis events
             "analysis_started": "Starting security analysis...",
             "language_detection_started": "Detecting programming languages...",
             "language_detection_completed": "✓ Languages detected",
@@ -118,6 +119,9 @@ class ProgressTracker:
             "codeql_database_created": "✓ CodeQL database created",
             "codeql_queries_started": "Running security queries...",
             "codeql_queries_completed": "✓ Security queries completed",
+            "custom_queries_started": "Running custom queries...",
+            "custom_queries_completed": "✓ Custom queries completed",
+            "custom_queries_failed": "⚠ Custom queries failed",
             "sarif_parsing_started": "Parsing results...",
             "sarif_parsing_completed": "✓ Results parsed",
             "triage_started": "Triaging findings (AI prioritization)...",
@@ -127,15 +131,32 @@ class ProgressTracker:
             "statistics_computation_started": "Computing statistics...",
             "statistics_computation_completed": "✓ Statistics computed",
             "analysis_completed": "✓ Analysis completed!",
+            # Report events
             "report_generation_started": "Generating report (AI)...",
             "report_generation_completed": "✓ Report generated",
             "report_saving": "Saving report...",
             "report_saved": "✓ Report saved",
+            # Fix events
             "fix_generation_started": "Generating fix (AI)...",
             "fix_generation_completed": "✓ Fix generated",
             "fix_application_started": "Applying fix...",
             "fix_applied_to_file": "✓ Fix applied to file",
             "fix_application_completed": "✓ Fix applied successfully",
+            # Finetune events
+            "finetune_started": "Starting query finetuning...",
+            "project_analysis_started": "Analyzing project structure...",
+            "project_analysis_completed": "✓ Project analyzed",
+            "vulnerability_targeting_started": "Determining vulnerability targets...",
+            "vulnerability_targeting_completed": "✓ Targets determined",
+            "vulnerability_brainstorming_started": "Brainstorming relevant vulnerabilities (AI)...",
+            "vulnerability_brainstorming_completed": "✓ Vulnerabilities identified",
+            "ql_pack_setup_started": "Setting up CodeQL packs...",
+            "ql_pack_setup_completed": "✓ CodeQL packs ready",
+            "query_generation_started": "Generating custom queries...",
+            "query_generation_completed": "✓ Custom queries generated",
+            "metadata_save_started": "Saving query metadata...",
+            "metadata_save_completed": "✓ Metadata saved",
+            "finetune_completed": "✓ Query finetuning completed!",
         }
 
         # Special handling for per-finding detailed analysis progress
@@ -149,6 +170,56 @@ class ProgressTracker:
 
             # Update or create detailed analysis task with actual progress
             base_event = "detailed_analysis_started"
+            if base_event in self.tasks:
+                # Calculate percentage based on current/total
+                percentage = (current / total) * 100
+                self.progress.update(
+                    self.tasks[base_event],
+                    completed=percentage,
+                    description=description,
+                )
+            return
+
+        # Special handling for per-query generation progress
+        if event == "query_generation_progress":
+            current = data.get("current", 0)
+            total = data.get("total", 1)
+            language = data.get("language", "unknown")
+            vulnerability = data.get("vulnerability", "unknown")
+
+            # Truncate long vulnerability names for display
+            if len(vulnerability) > 40:
+                vulnerability = vulnerability[:37] + "..."
+
+            description = f"Generating query {current}/{total} ({language}: {vulnerability})"
+
+            # Create task if not exists, or update existing one
+            base_event = "query_generation_started"
+            if base_event not in self.tasks:
+                # Create the task on first query
+                task_id = self.progress.add_task(description, total=100)
+                self.tasks[base_event] = task_id
+                self.current_phase = base_event
+
+            # Calculate percentage based on current/total
+            percentage = (current / total) * 100
+            self.progress.update(
+                self.tasks[base_event],
+                completed=percentage,
+                description=description,
+            )
+            return
+
+        # Special handling for per-pack setup progress
+        if event == "ql_pack_setup_progress":
+            current = data.get("current", 0)
+            total = data.get("total", 1)
+            language = data.get("language", "unknown")
+
+            description = f"Installing CodeQL pack {current}/{total} ({language})"
+
+            # Update existing ql_pack_setup_started task
+            base_event = "ql_pack_setup_started"
             if base_event in self.tasks:
                 # Calculate percentage based on current/total
                 percentage = (current / total) * 100

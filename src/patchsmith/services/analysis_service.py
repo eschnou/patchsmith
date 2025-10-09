@@ -14,6 +14,8 @@ from patchsmith.adapters.codeql.parsers import SARIFParser
 from patchsmith.models.analysis import AnalysisResult, AnalysisStatistics, TriageResult
 from patchsmith.models.config import PatchsmithConfig
 from patchsmith.models.finding import DetailedSecurityAssessment, Finding, Severity
+from patchsmith.models.project import LanguageDetection, ProjectInfo
+from patchsmith.repositories.project_repository import ProjectRepository
 from patchsmith.services.base_service import BaseService
 from patchsmith.utils.logging import get_logger
 
@@ -62,6 +64,7 @@ class AnalysisService(BaseService):
         perform_triage: bool = True,
         perform_detailed_analysis: bool = True,
         detailed_analysis_limit: int | None = None,
+        custom_only: bool = False,
     ) -> tuple[AnalysisResult, list[TriageResult] | None, dict[str, DetailedSecurityAssessment] | None]:
         """
         Perform complete security analysis on a project.
@@ -71,6 +74,7 @@ class AnalysisService(BaseService):
             perform_triage: Whether to perform triage (prioritization)
             perform_detailed_analysis: Whether to perform detailed analysis on top findings
             detailed_analysis_limit: Max findings to analyze in detail (None = all recommended)
+            custom_only: Whether to run only custom queries (skip standard queries)
 
         Returns:
             Tuple of (AnalysisResult, triage_results, detailed_assessments)
@@ -81,34 +85,62 @@ class AnalysisService(BaseService):
         self._emit_progress("analysis_started", project_path=str(project_path))
 
         try:
-            # Step 1: Detect languages
-            self._emit_progress("language_detection_started")
+            # Step 1: Detect languages (or load from cache)
+            project_info = ProjectRepository.load(project_path)
 
-            # Create agent progress callback that updates the language_detection task
-            def agent_progress_callback(current_turn: int, max_turns: int):
-                # Emit progress based on agent turns
+            if project_info and project_info.languages:
+                # Use cached language detection
+                languages = project_info.languages
+                language_names = project_info.get_language_names()
+                logger.info(
+                    "language_detection_cached",
+                    languages=language_names,
+                    count=len(language_names),
+                )
                 self._emit_progress(
-                    "agent_turn_progress",
-                    current_turn=current_turn,
-                    max_turns=max_turns,
+                    "language_detection_completed",
+                    languages=language_names,
+                    count=len(language_names),
+                    cached=True,
+                )
+            else:
+                # Perform language detection
+                self._emit_progress("language_detection_started")
+
+                # Create agent progress callback that updates the language_detection task
+                def agent_progress_callback(current_turn: int, max_turns: int):
+                    # Emit progress based on agent turns
+                    self._emit_progress(
+                        "agent_turn_progress",
+                        current_turn=current_turn,
+                        max_turns=max_turns,
+                    )
+
+                language_agent = LanguageDetectionAgent(
+                    working_dir=project_path,
+                    thinking_callback=self.thinking_callback,
+                    progress_callback=agent_progress_callback,
+                )
+                languages = await language_agent.execute(project_path=project_path)
+
+                # Clear thinking display when agent completes
+                if self.thinking_callback:
+                    self.thinking_callback("")
+
+                language_names = [lang.name for lang in languages]
+                self._emit_progress(
+                    "language_detection_completed",
+                    languages=language_names,
+                    count=len(languages),
                 )
 
-            language_agent = LanguageDetectionAgent(
-                working_dir=project_path,
-                thinking_callback=self.thinking_callback,
-                progress_callback=agent_progress_callback,
-            )
-            languages = await language_agent.execute(project_path=project_path)
-
-            # Clear thinking display when agent completes
-            if self.thinking_callback:
-                self.thinking_callback("")
-
-            self._emit_progress(
-                "language_detection_completed",
-                languages=[lang.name for lang in languages],
-                count=len(languages),
-            )
+                # Save project info for future use
+                project_info = ProjectInfo(
+                    name=project_path.name,
+                    root=project_path,
+                    languages=languages,
+                )
+                ProjectRepository.save(project_info)
 
             if not languages:
                 raise ValueError("No languages detected in project")
@@ -163,27 +195,92 @@ reports/
                 database_path=str(db_path),
             )
 
-            # Step 3: Run CodeQL queries
-            self._emit_progress("codeql_queries_started")
-            query_suite = self._get_query_suite(codeql_language)
-            results_path = patchsmith_dir / f"results_{codeql_language}.sarif"
+            # Step 3: Run CodeQL queries (standard or skip if custom-only)
+            if not custom_only:
+                self._emit_progress("codeql_queries_started")
+                query_suite = self._get_query_suite(codeql_language)
+                results_path = patchsmith_dir / f"results_{codeql_language}.sarif"
 
-            self.codeql.run_queries(
-                db_path=db_path,
-                query_path=query_suite,
-                output_format="sarif-latest",
-                output_path=results_path,
-                threads=self.config.codeql.threads,
-                download=True,
-            )
-            self._emit_progress(
-                "codeql_queries_completed",
-                results_path=str(results_path),
-            )
+                self.codeql.run_queries(
+                    db_path=db_path,
+                    query_path=query_suite,
+                    output_format="sarif-latest",
+                    output_path=results_path,
+                    threads=self.config.codeql.threads,
+                    download=True,
+                )
+                self._emit_progress(
+                    "codeql_queries_completed",
+                    results_path=str(results_path),
+                )
+            else:
+                # Custom-only mode: create empty results file
+                results_path = patchsmith_dir / f"results_{codeql_language}.sarif"
+                logger.info("custom_only_mode", message="Skipping standard queries")
 
-            # Step 4: Parse SARIF results
+            # Step 3.5: Run custom queries if they exist
+            # Use detected language name (not CodeQL mapped name) to find custom queries
+            # e.g., look in .patchsmith/queries/typescript/ not /javascript/
+            custom_queries_dir = self._get_custom_queries_dir(
+                project_path, primary_language.name
+            )
+            if custom_queries_dir and custom_queries_dir.exists():
+                self._emit_progress("custom_queries_started")
+                custom_results_path = (
+                    patchsmith_dir / f"results_custom_{codeql_language}.sarif"
+                )
+
+                try:
+                    self.codeql.run_queries(
+                        db_path=db_path,
+                        query_path=custom_queries_dir,
+                        output_format="sarif-latest",
+                        output_path=custom_results_path,
+                        threads=self.config.codeql.threads,
+                        download=False,  # Custom queries are local
+                    )
+                    self._emit_progress(
+                        "custom_queries_completed",
+                        results_path=str(custom_results_path),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "custom_queries_failed",
+                        error=str(e),
+                        custom_queries_dir=str(custom_queries_dir),
+                    )
+                    self._emit_progress(
+                        "custom_queries_failed",
+                        error=str(e),
+                    )
+                    # Continue with standard results even if custom queries fail
+                    custom_results_path = None
+            else:
+                custom_results_path = None
+
+            # Step 4: Parse SARIF results (standard + custom)
             self._emit_progress("sarif_parsing_started")
-            findings = self.sarif_parser.parse_file(results_path)
+
+            # Parse standard results (if not custom-only)
+            if not custom_only and results_path.exists():
+                findings = self.sarif_parser.parse_file(results_path)
+            else:
+                findings = []
+
+            # Add findings from custom queries if available
+            if custom_results_path and custom_results_path.exists():
+                try:
+                    custom_findings = self.sarif_parser.parse_file(custom_results_path)
+                    findings.extend(custom_findings)
+                    logger.info(
+                        "custom_findings_added",
+                        count=len(custom_findings),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "custom_findings_parse_failed",
+                        error=str(e),
+                    )
 
             # Assign short, user-friendly IDs (F-1, F-2, etc.)
             findings = self._assign_short_ids(findings)
@@ -430,6 +527,35 @@ reports/
             "ruby": "codeql/ruby-queries:codeql-suites/ruby-security-and-quality.qls",
         }
         return query_suites.get(language, f"codeql/{language}-queries")
+
+    def _get_custom_queries_dir(
+        self, project_path: Path, language: str
+    ) -> Path | None:
+        """
+        Get custom queries directory for a language.
+
+        Args:
+            project_path: Project root path
+            language: CodeQL language name
+
+        Returns:
+            Path to custom queries directory, or None if not found
+        """
+        custom_dir = project_path / ".patchsmith" / "queries" / language
+
+        # Check if directory exists and contains .ql files
+        if custom_dir.exists() and custom_dir.is_dir():
+            ql_files = list(custom_dir.glob("*.ql"))
+            if ql_files:
+                logger.info(
+                    "custom_queries_found",
+                    language=language,
+                    count=len(ql_files),
+                    directory=str(custom_dir),
+                )
+                return custom_dir
+
+        return None
 
     def _compute_statistics(self, findings: list[Finding]) -> AnalysisStatistics:
         """

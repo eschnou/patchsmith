@@ -5,6 +5,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from patchsmith.models.finding import Severity
+
 
 class LanguageDetection(BaseModel):
     """Detected programming language with confidence."""
@@ -74,3 +76,29 @@ class ProjectInfo(BaseModel):
             List of high-confidence language names
         """
         return [lang.name for lang in self.languages if lang.confidence >= threshold]
+
+
+class VulnerabilitySuggestion(BaseModel):
+    """AI-suggested vulnerability to target with custom CodeQL query."""
+
+    vulnerability_type: str = Field(
+        ..., description="Vulnerability name (e.g., 'postMessage origin validation')"
+    )
+    language: str = Field(..., description="Target language for query")
+    severity: Severity = Field(..., description="Severity level")
+    reasoning: str = Field(
+        ..., description="Why this vulnerability is relevant to this project"
+    )
+    confidence: float = Field(
+        ..., ge=0.0, le=1.0, description="Confidence that this is relevant (0.0-1.0)"
+    )
+    evidence: list[str] = Field(
+        default_factory=list,
+        description="Evidence from project analysis (file paths, patterns found)",
+    )
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, v: str) -> str:
+        """Normalize language name to lowercase."""
+        return v.lower()

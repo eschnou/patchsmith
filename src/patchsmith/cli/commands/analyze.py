@@ -30,10 +30,17 @@ from patchsmith.services.analysis_service import AnalysisService
     type=click.Path(path_type=Path),
     help="Save analysis results to file (JSON format)"
 )
+@click.option(
+    "--custom-only",
+    is_flag=True,
+    default=False,
+    help="Run only custom queries (skip standard CodeQL queries)"
+)
 def analyze(
     path: Path | None,
     triage: bool,
     output: Path | None,
+    custom_only: bool,
 ) -> None:
     """Run complete security analysis on a project.
 
@@ -51,25 +58,31 @@ def analyze(
     \b
     Examples:
         patchsmith analyze /path/to/project
-        patchsmith analyze .                     # Analyze current directory
-        patchsmith analyze --no-triage     # Skip triage step
-        patchsmith analyze -o results.json # Save results to file
+        patchsmith analyze .                      # Analyze current directory
+        patchsmith analyze --no-triage            # Skip triage step
+        patchsmith analyze --custom-only          # Run only custom queries
+        patchsmith analyze -o results.json        # Save results to file
     """
     # Use current directory if no path provided
     if path is None:
         path = Path.cwd()
 
     console.print(f"\n[bold cyan]🔒 Patchsmith Security Analysis[/bold cyan]")
-    console.print(f"Project: [yellow]{path}[/yellow]\n")
+    console.print(f"Project: [yellow]{path}[/yellow]")
+    if custom_only:
+        console.print(f"Mode: [yellow]Custom queries only[/yellow]\n")
+    else:
+        console.print()
 
     # Run analysis
-    asyncio.run(_run_analysis(path, triage, output))
+    asyncio.run(_run_analysis(path, triage, output, custom_only))
 
 
 async def _run_analysis(
     path: Path,
     perform_triage: bool,
     output_path: Path | None,
+    custom_only: bool = False,
 ) -> None:
     """Run the analysis workflow.
 
@@ -77,6 +90,7 @@ async def _run_analysis(
         path: Path to project
         perform_triage: Whether to perform triage
         output_path: Optional path to save results
+        custom_only: Whether to run only custom queries
     """
     try:
         # Create configuration
@@ -99,6 +113,7 @@ async def _run_analysis(
                 project_path=path,
                 perform_triage=perform_triage,
                 perform_detailed_analysis=False,  # Detailed analysis moved to 'investigate' command
+                custom_only=custom_only,
             )
 
         # Display results

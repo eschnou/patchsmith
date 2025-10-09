@@ -10,6 +10,7 @@ from patchsmith.cli.commands import (
     analyze,
     clean,
     completion,
+    finetune,
     fix,
     init,
     investigate,
@@ -36,6 +37,7 @@ def cli(ctx: click.Context, debug: bool) -> None:
     \b
     Quick Start:
         patchsmith analyze /path/to/project    # Run security analysis (or: psmith analyze)
+        patchsmith finetune                    # Generate custom queries for your project
         patchsmith list                        # List all findings
         patchsmith investigate <finding-id>    # Deep analysis of a finding
         patchsmith fix <finding-id>            # Fix a specific vulnerability
@@ -67,6 +69,7 @@ cli.add_command(list.list_findings)
 cli.add_command(investigate.investigate)
 cli.add_command(report.report)
 cli.add_command(fix.fix)
+cli.add_command(finetune.finetune)
 cli.add_command(init.init)
 cli.add_command(clean.clean)
 cli.add_command(completion.completion)
