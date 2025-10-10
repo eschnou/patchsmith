@@ -417,6 +417,9 @@ class QueryFinetuneService(BaseService):
         """
         Build vulnerability targets from user-specified focus areas.
 
+        When focus areas are provided, generate exactly one query per focus area
+        using the primary (first detected) language.
+
         Args:
             languages: Project languages
             focus_areas: User-specified focus areas
@@ -427,11 +430,14 @@ class QueryFinetuneService(BaseService):
         """
         targets: list[tuple[str, str, Severity]] = []
 
-        for lang in languages:
-            for area in focus_areas[:max_queries]:
-                targets.append((lang, area, Severity.HIGH))
+        # Use primary language for all focused queries
+        primary_language = languages[0] if languages else "python"
 
-        return targets[:max_queries]
+        # Generate one query per focus area (not per language)
+        for area in focus_areas:
+            targets.append((primary_language, area, Severity.HIGH))
+
+        return targets
 
     def _determine_vulnerability_targets(
         self,

@@ -84,11 +84,24 @@ poetry install
 poetry run patchsmith --help
 ```
 
-#### Option 2: Install with pip (Coming Soon)
+**Using Poetry Shell for Other Repositories**
+
+To analyze other projects without prefixing every command with `poetry run`, activate the Poetry virtual environment:
 
 ```bash
-pip install patchsmith
+# From the patchsmith directory, activate the virtual environment
+poetry shell
+
+# Now you can use patchsmith directly on any repository
+cd /path/to/your/project
+patchsmith init
+patchsmith analyze --investigate
+
+# Exit the virtual environment when done
+exit
 ```
+
+This approach is especially useful when working with multiple projects, as you can navigate anywhere and run `patchsmith` commands directly without the `poetry run` prefix.
 
 ## 📖 Usage
 
@@ -120,6 +133,9 @@ patchsmith analyze -o results.json
 ```bash
 # Generate project-specific CodeQL queries
 patchsmith finetune
+
+# Focus on specific security concerns
+patchsmith finetune --focus "SQL injection and authentication bypass"
 
 # Use custom queries in analysis
 patchsmith analyze --investigate
@@ -211,19 +227,27 @@ This approach saves time and API costs while ensuring thorough analysis of criti
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│         CLI Layer (Rich UI)              │
-├─────────────────────────────────────────┤
-│  Service Layer (Business Logic)          │
-│  • AnalysisService                       │
-│  • ReportService                         │
-│  • FixService                            │
-├─────────────────────────────────────────┤
-│  Adapter Layer (External Integrations)   │
-│  • CodeQL CLI                            │
-│  • Claude AI                             │
-│  • Git                                   │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  Layer 4: Presentation                                   │
+│  • CLI (Rich UI)                                         │
+│  • HTTP API (coming soon)                                │
+├──────────────────────────────────────────────────────────┤
+│  Layer 3: Orchestration                                  │
+│  • Workflow management                                   │
+│  • Exception and error handling                          │
+│  • Progress tracking                                     │
+├──────────────────────────────────────────────────────────┤
+│  Layer 2: Custom Agents                                  │
+│  • Analysis agents (triage, investigation)               │
+│  • Brainstorming agents (vulnerability suggestions)      │
+│  • Review agents (fix validation)                        │
+│  • Code generation agents (query, patch)                 │
+├──────────────────────────────────────────────────────────┤
+│  Layer 1: Tools Wrapper                                  │
+│  • CodeQL CLI                                            │
+│  • Git                                                   │
+│  • GitHub API                                            │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## 🧪 Testing
@@ -238,17 +262,6 @@ poetry run pytest --cov
 # Run manual end-to-end test
 poetry run python tests/manual_test_service_layer.py /path/to/project
 ```
-
-## 📋 Development Status
-
-🚧 **Alpha** - Core features implemented and working. Under active development.
-
-**Current Status:**
-- ✅ Phase 1: Foundation (Infrastructure, Models)
-- ✅ Phase 2: Adapters (CodeQL, Claude AI, Git)
-- ✅ Phase 3: Service Layer
-- ✅ Phase 4: CLI Layer
-- 🔄 Phase 5: Data Layer (Planned)
 
 ## 📜 License
 
@@ -277,4 +290,4 @@ See the [LICENSE](LICENSE) file for the full license text.
 
 ---
 
-**Made with ❤️ for secure software development**
+**Made with ❤️ by [Transcode](https://transcode.be) for secure software development**
