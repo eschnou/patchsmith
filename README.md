@@ -15,7 +15,7 @@ Patchsmith combines the power of [CodeQL](https://codeql.github.com/) static ana
 </p>
 
 <p align="center">
-  <em>Patchsmith's beautiful CLI interface with real-time progress tracking, intelligent triage, and comprehensive security reports</em>
+  <em>Patchsmith's CLI interface with real-time progress tracking, intelligent triage, and comprehensive security reports</em>
 </p>
 
 ---
