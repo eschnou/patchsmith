@@ -53,24 +53,15 @@ Patchsmith combines the power of [CodeQL](https://codeql.github.com/) static ana
    codeql version
    ```
 
-3. **Anthropic API Key** (required for AI features)
-   - Sign up at [console.anthropic.com](https://console.anthropic.com/)
-   - Get your API key
-   - Configure using one of these methods:
-     ```bash
-     # Option 1: Save to user config (recommended)
-     patchsmith init --save-api-key
-
-     # Option 2: Environment variable
-     export ANTHROPIC_API_KEY='your-api-key-here'
-
-     # Option 3: Create ~/.patchsmith/config.yaml
-     # anthropic_api_key: 'your-api-key-here'
-     ```
-
 ### Installation
 
-#### Option 1: Install from Source (Development)
+#### Install from Repository
+
+```bash
+pipx install "git+https://github.com/eschnou/patchsmith.git"
+```
+
+#### Install from Source (Development)
 
 ```bash
 # Clone the repository
