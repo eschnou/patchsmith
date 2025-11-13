@@ -8,18 +8,6 @@ Patchsmith combines the power of [CodeQL](https://codeql.github.com/) static ana
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
----
-
-<p align="center">
-  <img src="patchsmith_preview.png" alt="Patchsmith in action" width="800">
-</p>
-
-<p align="center">
-  <em>Patchsmith's CLI interface with real-time progress tracking, intelligent triage, and comprehensive security reports</em>
-</p>
-
----
-
 ## ✨ Features
 
 - 🔍 **Static Analysis** - Powered by GitHub's CodeQL engine
@@ -31,6 +19,18 @@ Patchsmith combines the power of [CodeQL](https://codeql.github.com/) static ana
 - 📊 **Rich Reports** - Detailed reports in Markdown and HTML
 - 🎨 **Beautiful CLI** - Intuitive interface with progress tracking
 - 🔄 **Git Integration** - Automatic branching and commits for fixes
+
+---
+
+<p align="center">
+  <img src="patchsmith_preview.png" alt="Patchsmith in action" width="800">
+</p>
+
+<p align="center">
+  <em>Patchsmith's CLI interface with real-time progress tracking, intelligent triage, and comprehensive security reports</em>
+</p>
+
+---
 
 ## 🚀 Quick Start
 
